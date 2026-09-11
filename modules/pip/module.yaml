@@ -1,7 +1,10 @@
-# Watchman 模块插件 YAML 2.2 — 画中画
-# 八类：log_whitelist / log_blacklist / apis.internal（引擎定位） / apis.external（前端多选） /
-#       apis.dependencies（引擎定位） / scenarios / scenarios.callchain+key_logs / collect
-schema_version: "2.2.0"
+# Watchman 画中画 YAML 2.3
+# 来源：接口仓 interface_sdk-js/zh-cn/api/@ohos.PiPWindow.d.ts
+#       文档仓 docs/zh-cn/application-dev/reference/apis-arkui/js-apis-pipWindow.md
+#       实现仓 window_window_manager（NAPI js_pip_* + PictureInPictureController）
+# 前端仓 repos.fe 未配置，不猜应用侧锚点。
+# 原子 = 一次对外调用。create 只创建控制器；真正建窗在 start。
+schema_version: "2.3.0"
 module_id: pip
 enabled: true
 meta:
@@ -11,39 +14,38 @@ meta:
   field_id: RF-WMS-PIP
   field_name: WMS-PiP
   description: |
-    【做什么】应用通过 @ohos.PiPWindow（create / isPiPEnabled）、PiPController（startPiP / stopPiP / 状态回调）
-    以及 NDK oh_window_pip，在主窗口上创建、启动、停止、还原「画中画小窗」。
-    【典型现象·应分流到本模块】第二次 startPiP 失败、create 报参数错误/401、能力探测 801、
-    启停被状态机拒绝、stop 后还原 Navigation 失败、多屏 screenId 非法、框架拿不到 PiP controller。
-    【不要分流到本模块】普通子窗/系统悬浮窗（createSubWindow、floatWindow）→ 子窗/悬浮窗；
+    【做什么】应用通过 @ohos.PiPWindow（isPiPEnabled / create）和 PiPController
+    （startPiP / stopPiP / setAutoStartEnabled / updateContentNode）在主窗口上创建控制器、启动、停止画中画小窗。
+    NDK 对应 OH_PictureInPicture_CreatePip / StartPip / StopPip。
+    【典型现象】create 报 401 参数错误、801 能力不支持、第二次 startPiP 失败、stop 后还原 Navigation 失败、主窗未 show 时启动失败。
+    【不要分流】普通子窗/系统悬浮窗（createSubWindow、floatWindow）→ 子窗/悬浮窗；
     分屏/自由多窗 → 分屏；纯播放器 overlay、从未 startPiP → 媒体；
-    startPiP 已成功但画面黑（XComponent/surface）→ ArkUI。
-    【怎么定位】阶段二用 collect.regex 去 BetaClub 捞日志；引擎只拿各场景 key_logs 去匹配，
-    命中哪条探针，调用链就断在该条的 layer_id/function。
+    startPiP 已成功但画面黑（XComponent/surface）→ 依赖 ArkUI。
+    【怎么定位】阶段二按原子时间线回放：创建✓ → 启动✓/✗ → 停止✓/✗。
   owners: []
   kb:
     path: window_window_manager/docs/kb/pip-kb.md
     feature_dir: localize-kb/features/pip
 log_whitelist:
   - id: WL-WMS-PIP
-    regex: (?:WmsLogTag::)?WMS_PIP\b
+    regex: '(?:WmsLogTag::)?WMS_PIP\b'
     flags: i
     meaning: 本模块主 tag，命中即可确认归画中画
   - id: WL-PARAM
     regex: pipOption\s+param\s+error
     flags: i
-    meaning: 本模块 pipOption 参数校验日志
+    meaning: create 时 NAPI 参数校验失败
   - id: WL-LIFE
-    regex: (?:pipWindow\s+is\s+starting|Pip\s+window\s+is\s+starting|Repeat\s+stop|Repeated\s+PiP|\bSTART_PIP\b|\bSTOP_PIP\b)
+    regex: (?:OnStartPictureInPicture\s+is\s+called|OnStopPictureInPicture\s+is\s+called|CreateJsPipController|\bSTART_PIP\b|\bSTOP_PIP\b)
     flags: i
-    meaning: 本模块生命周期 / HiSysEvent 埋点
+    meaning: 启停入口或 HiSysEvent 埋点
 log_blacklist:
   - id: BL-FLOAT
     regex: (?:createSubWindow|floatWindow|\bsubWindow\b)
     flags: i
     to_module: subwindow
     to_module_name: 子窗/悬浮窗
-    reason: 无本模块白名单日志时，更像普通子窗或系统悬浮窗
+    reason: 无本模块白名单时，更像普通子窗或系统悬浮窗
     unless_whitelist: true
   - id: BL-SPLIT
     regex: (?:FreeWindow|FreeMultiWindow|splitScreen|ISplit)
@@ -61,575 +63,407 @@ log_blacklist:
     unless_whitelist: true
 apis:
   external:
-    - id: PiPWindow.isPiPEnabled
-      label: PiPWindow.isPiPEnabled
-      role: 能力探测
-    - id: PiPWindow.create
-      label: PiPWindow.create
-      role: 创建
-    - id: PiPController.startPiP
-      label: PiPController.startPiP
-      role: 启动
-    - id: PiPController.stopPiP
-      label: PiPController.stopPiP
-      role: 停止
-    - id: PiPController.setAutoStartEnabled
-      label: PiPController.setAutoStartEnabled
-      role: 自动启动
-    - id: PiPWindow.on
-      label: PiPWindow.on('stateChange')
-      role: 状态回调
-    - id: OH_Window_Pip
-      label: OH_Window_Pip / PictureInPicture_*
-      role: NDK 公开 API
+    - { id: PiPWindow.isPiPEnabled, role: 能力探测 }
+    - { id: PiPWindow.create, role: 创建控制器 }
+    - { id: PiPController.startPiP, role: 启动 }
+    - { id: PiPController.stopPiP, role: 停止 }
+    - { id: PiPController.setAutoStartEnabled, role: 自动启动 }
+    - { id: PiPController.updateContentNode, role: 更新内容节点 }
+    - { id: PiPWindow.on, label: PiPWindow.on('stateChange'), role: 状态回调 }
+    - { id: OH_PictureInPicture_CreatePip, role: NDK 创建 }
+    - { id: OH_PictureInPicture_StartPip, role: NDK 启动 }
+    - { id: OH_PictureInPicture_StopPip, role: NDK 停止 }
   internal:
-    - id: JsPipWindowManager
-      label: JsPipWindowManager
-      role: NAPI 入口与 pipOption 校验
-    - id: JsPipController
-      label: JsPipController
-      role: NAPI 控制器
-    - id: PictureInPictureController
-      label: PictureInPictureController
-      role: 窗口生命周期与状态机
-    - id: PictureInPictureManager
-      label: PictureInPictureManager
-      role: 控制器管理
-    - id: PipController
-      label: PipController
-      role: Session 多屏/策略
-    - id: PiPReporter
-      label: PiPReporter
-      role: HiSysEvent 上报
+    - { id: JsPipWindowManager, role: NAPI 创建与参数校验 }
+    - { id: JsPipController, role: NAPI 启停转发 }
+    - { id: PictureInPictureController, role: 控制器与建窗校验 }
+    - { id: PictureInPictureControllerBase, role: 启停状态机与显隐 }
+    - { id: PictureInPictureManager, role: 控制器管理 }
+    - { id: PiPReporter, role: HiSysEvent 上报 }
   dependencies:
-    - id: navController
-      label: navController / Navigation
-      module: navigation
-      role: 还原原页
-    - id: XComponentController
-      label: XComponentController
-      module: arkui
-      role: 内容节点
-    - id: typeNode
-      label: typeNode
-      module: arkui
-      role: 内容节点
+    - { id: navController, module: navigation, role: 还原原页 }
+    - { id: XComponentController, module: arkui, role: 内容节点 }
+    - { id: typeNode, module: arkui, role: typeNode 内容节点 }
+    - { id: FloatWindowManager, module: subwindow, role: 真正创建/销毁 PiP 窗口 }
 collect:
   title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
   where: BetaClub
-  hint: 只需这一条正则。在 BetaClub 搜集后，把结果原样贴到下方。
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
   regex: >-
-    (?:WMS_PIP|pipOption\s+param\s+error|pipWindow\s+is\s+starting|Pip\s+window\s+is\s+starting|Repeat(?:ed)?\s+(?:stop|PiP)|START_PIP|STOP_PIP|OPERATION_ERROR_REASON|RESOTRE_PIP|UPDATE_CONTENT_NODE|Get\s+navController\s+error|Navigation\s+operate\s+failed|Top\s+is\s+not\s+navDestination|setXController|xComponentController\s+is\s+null|main\s+window\s+xComponent\s+not\s+set|Invalid\s+typeNode)
-scenarios:
-  - id: SC-CREATE-PARAM
-    title: 创建参数非法
-    boundary: APP_MISUSE
-    priority: 10
-    summary: create 时 pipOption 非法。命中 pipOption param error → 断在 NAPI，请求未进窗口控制器。
+    (?:WMS_PIP|pipOption\s+param\s+error|config\s+is\s+null|CreateJsPipController|OnStartPictureInPicture|OnStopPictureInPicture|OnSetAutoStartEnabled|OnUpdateContentNode|pipWindow\s+is\s+starting|Repeat\s+stop\s+request|Repeated\s+PiP|START_PIP|STOP_PIP|RESOTRE_PIP|start\s+pip\s+success|show\s+pip\s+success|pip\s+window\s+stop\s+success|Create\s+pip\s+window\s+failed|Show\s+pip\s+window\s+failed|Create\s+pip\s+failed|mainWindow\s+is\s+not\s+shown|Window\s+create\s+failed|Navigation\s+operate\s+failed|Get\s+navController\s+error|Top\s+is\s+not\s+navDestination|navController\s+is\s+nullptr|setXController|xComponentController\s+is\s+null|main\s+window\s+xComponent\s+not\s+set|Invalid\s+typeNode|updateNode\s+success|restore\s+pip\s+main\s+window\s+finished)
+atoms:
+  - id: create
+    title: 创建
+    api: PiPWindow.create
     callchain:
-      - layer_id: L-JS
-        name: 应用调用 create
-        do: 组装 pipOption（context / 内容节点 / template / controlGroup）
-        symbols: [PiPWindow.create]
-      - layer_id: L-NAPI
-        name: NAPI 参数校验
-        do: JsPipWindowManager 校验 pipOption
-        locate: 命中 pipOption param error 即停在本层，看后续短语定位原因（context / XComponent / template）
-        symbols: [JsPipWindowManager]
-        exception: true
-    key_logs:
-      - id: LOG-PARAM
-        meaning: NAPI 校验失败，create 未进窗口控制器
+      - { layer_id: L-JS, name: 应用调用 create, do: 组装 PiPConfiguration（context / XComponent / template / controlGroup），可选传入 typeNode, symbols: [PiPWindow.create] }
+      - { layer_id: L-NAPI, name: NAPI 校验, do: JsPipWindowManager 解析 config，校验模板与控件组, symbols: [JsPipWindowManager] }
+      - { layer_id: L-WM-CLIENT, name: 拿到主窗并构造控制器, do: GetMainWindowWithContext 后 new PictureInPictureController；此时还不建 PiP 窗口, symbols: [PictureInPictureController, PictureInPictureManager] }
+    enter:
+      - id: IN-CREATE
+        meaning: 已进入 PiPWindow.create
+        regex: '\[NAPI\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipWindowManager
+    success:
+      - id: OK-CREATE
+        meaning: 控制器已创建，create 完成；窗口要等 startPiP
+        regex: CreateJsPipController
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+    failures:
+      - id: FAIL-CREATE-CONFIG-NULL
+        title: 配置为空
+        kind: 应用误用
+        when: create 未传 config 或为 null
+        meaning: 断在 NAPI，未进控制器
+        locate: 看 config is null / Missing args
+        regex: '(?:config\s+is\s+null|Missing\s+args\s+when\s+creating\s+pipController)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipWindowManager
+      - id: FAIL-CREATE-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: context / XComponent / template / controlGroup / defaultWindowSizeType 不合法，文档对应 401
+        meaning: 断在 NAPI 参数校验，请求未构造控制器
+        locate: 看 pipOption param error 后半句，区分缺 context、缺 XComponent、模板不支持、控件组不匹配
         regex: pipOption\s+param\s+error
+        flags: i
         layer_id: L-NAPI
         function: JsPipWindowManager
+      - id: FAIL-CREATE-CTX
+        title: 缺少 Ability context
+        kind: 应用误用
+        when: config.context 为空
+        meaning: 断在 NAPI
+        regex: '(?:pipOption\s+param\s+error,\s*)?context\s+is\s+nullptr\.?'
         flags: i
-        severity: error
-        exception: true
-      - id: LOG-CTX-NULL
-        meaning: 没传 Ability context，断在 NAPI
-        regex: (?:pipOption\s+param\s+error,\s*)?context\s+is\s+nullptr\.?
         layer_id: L-NAPI
         function: JsPipWindowManager
+      - id: FAIL-CREATE-XCC
+        title: 缺少 XComponentController
+        kind: 应用误用
+        when: 非 typeNode 路径未传 componentController
+        meaning: 断在 NAPI
+        regex: '(?:pipOption\s+param\s+error,\s*)?XComponentController\s+is\s+nullptr\.?'
         flags: i
-        severity: error
-        exception: true
-      - id: LOG-XCC-NULL
-        meaning: 没传 XComponentController，断在 NAPI
-        regex: (?:pipOption\s+param\s+error,\s*)?XComponentController\s+is\s+nullptr\.?
         layer_id: L-NAPI
         function: JsPipWindowManager
+      - id: FAIL-CREATE-TPL
+        title: 模板非法或不支持
+        kind: 应用误用
+        when: pipTemplateType 不存在、设备不支持、或仅系统应用可用
+        meaning: 断在 NAPI
+        regex: 'pipOption\s+param\s+error,\s*(?:unsupported\s+pipTemplateType|pipTemplateType\s+not\s+exists|pipTemplateType\s+not\s+supported|templateType\s+\d+\s+requires\s+system\s+app)'
         flags: i
-        severity: error
-        exception: true
-      - id: LOG-CG-MISMATCH
-        meaning: controlGroup 与模板不匹配，断在 NAPI
-        regex: pipOption\s+param\s+error,\s*controlGroup\s+not\s+matches
         layer_id: L-NAPI
         function: JsPipWindowManager
+      - id: FAIL-CREATE-CG
+        title: 控件组不匹配
+        kind: 应用误用
+        when: controlGroups 与 templateType 不对应或内部冲突，文档对应 401
+        meaning: 断在 NAPI
+        regex: 'pipOption\s+param\s+error,\s*(?:controlGroup\s+not\s+matches|\d+\s+conflicts\s+with\s+\d+\s+in\s+controlGroups)'
         flags: i
-        severity: error
-        exception: true
-      - id: LOG-TPL-MISSING
-        meaning: pipTemplateType 不存在，断在 NAPI
-        regex: pipOption\s+param\s+error,\s*pipTemplateType\s+not\s+exists\.?
         layer_id: L-NAPI
         function: JsPipWindowManager
+      - id: FAIL-CREATE-SIZE-TYPE
+        title: 默认窗口尺寸类型非法
+        kind: 应用误用
+        when: defaultWindowSizeType 非法
+        meaning: 断在 NAPI
+        regex: 'pipOption\s+param\s+error,\s*invalid\s+defaultWindowSizeType'
         flags: i
-        severity: error
-        exception: true
-      - id: LOG-TPL-UNSUPPORTED
-        meaning: 当前设备/应用不支持该模板，断在 NAPI
-        regex: pipOption\s+param\s+error,\s*(?:pipTemplateType\s+not\s+supported|unsupported\s+pipTemplateType)
         layer_id: L-NAPI
         function: JsPipWindowManager
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-TPL-SYSTEM
-        meaning: 该模板仅系统应用可用，断在 NAPI
-        regex: pipOption\s+param\s+error,\s*templateType\s+\d+\s+requires\s+system\s+app
-        layer_id: L-NAPI
-        function: JsPipWindowManager
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-CG-CONFLICT
-        meaning: controlGroups 内部冲突，断在 NAPI
-        regex: pipOption\s+param\s+error,\s*\d+\s+conflicts\s+with\s+\d+\s+in\s+controlGroups
-        layer_id: L-NAPI
-        function: JsPipWindowManager
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-INVALID-SIZE-TYPE
-        meaning: defaultWindowSizeType 非法，断在 NAPI
-        regex: pipOption\s+param\s+error,\s*invalid\s+defaultWindowSizeType
-        layer_id: L-NAPI
-        function: JsPipWindowManager
-        flags: i
-        severity: error
-        exception: true
-  - id: SC-CREATE-INTERNAL
-    title: 创建时主窗/内部失败
-    boundary: FRAMEWORK_WM
-    priority: 30
-    summary: NAPI 已通过，创建主窗/pipOption 在 WM 客户端失败。命中 Main window is null 等 → 断在 PictureInPictureController。
+
+  - id: start
+    title: 启动
+    api: PiPController.startPiP
     callchain:
-      - layer_id: L-JS
-        name: 应用调用 create
-        symbols: [PiPWindow.create]
-      - layer_id: L-NAPI
-        name: NAPI 已放行
-        do: 参数合法，转发到窗口侧
-        symbols: [JsPipWindowManager]
-      - layer_id: L-WM-CLIENT
-        name: 创建 PiP 控制器/主窗
-        locate: 命中 mainWindow is null / not shown / invalid pipOption → 断在本层
-        symbols: [PictureInPictureController]
-        exception: true
-    key_logs:
-      - id: LOG-MAIN-WIN-NULL
-        meaning: 主窗指针空，断在 PictureInPictureController 创建
-        regex: (?:Main\s+window\s+is\s+null|\bmainWindow\s+is\s+(?:null|nullptr)\b)
+      - { layer_id: L-JS, name: 应用调用 startPiP, do: 启动画中画；错误码 1300012～1300015、1300034, symbols: [PiPController.startPiP, OH_PictureInPicture_StartPip] }
+      - { layer_id: L-NAPI, name: NAPI 转发, do: JsPipController 调 StartPictureInPicture(USER_START), symbols: [JsPipController] }
+      - { layer_id: L-WM-CLIENT, name: 状态机与建窗, do: 校验状态后 CreatePipWindow + Show；主窗未 show、重复启动、Navigation 失败都停在这, symbols: [PictureInPictureController, PictureInPictureControllerBase] }
+      - { layer_id: L-WM-SESSION, name: 窗口创建, do: FloatWindowManager.CreatePipWindow 真正出窗, symbols: [FloatWindowManager] }
+      - { layer_id: L-DEP-NAV, name: Navigation 缓存, do: start 前 IsPullPiPAndHandleNavigation，失败则整次启动失败, symbols: [navController] }
+      - { layer_id: L-DEP-XCOMP, name: 内容节点, do: 非 typeNode 路径把 XComponent 挂到 PiP 窗, symbols: [XComponentController] }
+    enter:
+      - id: IN-START
+        meaning: 已进入 startPiP
+        regex: OnStartPictureInPicture\s+is\s+called
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+    success:
+      - id: OK-START
+        meaning: 启动完成，窗口已 show
+        regex: '(?:start\s+pip\s+success|show\s+pip\s+success)'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureControllerBase
+      - id: OK-START-EVENT
+        meaning: HiSysEvent 上报启动成功
+        regex: '\bSTART_PIP\b'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PiPReporter
+    failures:
+      - id: FAIL-START-ABORT
+        title: 启动被中止
+        kind: 应用误用
+        when: ShouldAbortPipStart 为真（例如已有冲突的启动）
+        meaning: NAPI 直接 abort，未进控制器
+        regex: OnStartPictureInPicture\s+abort
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+      - id: FAIL-START-REPEAT
+        title: 重复启动
+        kind: 应用误用
+        when: 已在 STARTING 或 STARTED，文档对应 1300015
+        meaning: 状态机拒绝，对照日志 state
+        locate: pipWindow is starting 后的 state 值
+        regex: 'pipWindow\s+is\s+starting,\s*state:\s*\d+'
+        flags: i
         layer_id: L-WM-CLIENT
         function: PictureInPictureController
+      - id: FAIL-START-REPEAT-MSG
+        title: 重复 PiP 操作
+        kind: 应用误用
+        when: 返回 Repeated PiP operation
+        meaning: 与重复启动同一类
+        regex: Repeated\s+PiP\s+operation\.?
         flags: i
-        severity: error
-        exception: true
-      - id: LOG-MAIN-WIN-NOT-SHOWN
-        meaning: 主窗未 show，create 失败，断在控制器
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureController
+      - id: FAIL-START-MAIN-NOT-SHOWN
+        title: 主窗未显示
+        kind: 应用误用
+        when: 非自动启动且主窗不是 STATE_SHOWN，文档对应 1300013
+        meaning: 建窗校验失败，未创建 PiP 窗口
         regex: mainWindow\s+is\s+not\s+shown\.\s*create\s+failed\.?
+        flags: i
         layer_id: L-WM-CLIENT
         function: PictureInPictureController
+      - id: FAIL-START-INVALID-OPTION
+        title: 启动时 pipOption 非法
+        kind: 应用误用
+        when: start 时 pipOption 或 context 已空，文档对应 1300013
+        meaning: 断在控制器校验
+        regex: '(?:Create\s+pip\s+failed,\s*invalid\s+pipOption|pipOption\s+is\s+null\s+or\s+Get\s+PictureInPictureOption\s+failed)'
         flags: i
-        severity: error
-        exception: true
-      - id: LOG-CREATE-INVALID-OPTION
-        meaning: 控制器侧 pipOption 仍非法，断在创建
-        regex: Create\s+pip\s+failed,\s*invalid\s+pipOption
         layer_id: L-WM-CLIENT
         function: PictureInPictureController
+      - id: FAIL-START-NO-MAIN
+        title: 主窗或 XComponent 为空
+        kind: 应用误用
+        when: 非 typeNode 且主窗或 XComponentController 为空，文档对应 1300013
+        meaning: 断在建窗校验
+        regex: mainWindowXComponentController\s+or\s+mainWindow\s+is\s+nullptr
         flags: i
-        severity: error
-        exception: true
-  - id: SC-REPEAT-START
-    title: 启动中重复 startPiP
-    boundary: APP_MISUSE
-    priority: 12
-    summary: 已在 STARTING/STARTED 时再次 startPiP。命中 pipWindow is starting / Repeated PiP → 断在控制器状态机。
-    callchain:
-      - layer_id: L-JS
-        name: 再次 startPiP
-        symbols: [PiPController.startPiP]
-      - layer_id: L-NAPI
-        name: NAPI 转发
-        symbols: [JsPipController]
-      - layer_id: L-WM-CLIENT
-        name: 状态机拒绝重复 start
-        locate: 看 pipWindow is starting 的 state 值，确认当前已在启动中
-        symbols: [PictureInPictureController]
-        exception: true
-    key_logs:
-      - id: LOG-STARTING
-        meaning: 窗口已在启动中，重复 start，断在状态机
-        regex: pipWindow\s+is\s+starting,\s*state:\s*\d+
         layer_id: L-WM-CLIENT
         function: PictureInPictureController
-        flags: i
-        severity: warn
-        exception: true
-      - id: LOG-PIP-STARTING-ALT
-        meaning: 同上，Pip window is starting 文案变体
-        regex: Pip\s+window\s+is\s+starting
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: warn
-        exception: true
-      - id: LOG-REPEAT-OP
-        meaning: 重复 PiP 操作被拒，断在状态机
-        regex: Repeated\s+PiP\s+operation\.?
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: warn
-        exception: true
-  - id: SC-REPEAT-STOP
-    title: 重复 stopPiP
-    boundary: APP_MISUSE
-    priority: 12
-    summary: STOPPING/STOPPED/RESTORING 时再次 stopPiP。命中 Repeat stop request → 断在控制器状态机。
-    callchain:
-      - layer_id: L-JS
-        name: 再次 stopPiP
-        symbols: [PiPController.stopPiP]
-      - layer_id: L-NAPI
-        name: NAPI 转发
-        symbols: [JsPipController]
-      - layer_id: L-WM-CLIENT
-        name: 状态机拒绝重复 stop
-        locate: Repeat stop request 带 curState，对照当前状态
-        symbols: [PictureInPictureController]
-        exception: true
-    key_logs:
-      - id: LOG-REPEAT-STOP
-        meaning: 重复 stop，日志 curState 即当前状态
-        regex: Repeat\s+stop\s+request(?:,\s*curState:\s*\d+)?
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: warn
-        exception: true
-      - id: LOG-REPEAT-OP
-        meaning: 重复 PiP 操作被拒，断在状态机
-        regex: Repeated\s+PiP\s+operation\.?
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: warn
-        exception: true
-  - id: SC-TIMING
-    title: 启停/还原时序打断
-    boundary: APP_MISUSE
-    priority: 14
-    summary: 启停/还原过渡态交叉调用。命中 starting + Repeat stop / window nullptr when stop → 断在状态机时序。
-    callchain:
-      - layer_id: L-JS
-        name: 交叉调用 start/stop
-        symbols: [PiPController.startPiP, PiPController.stopPiP]
-      - layer_id: L-NAPI
-        name: NAPI 转发
-        symbols: [JsPipController]
-      - layer_id: L-WM-CLIENT
-        name: 过渡态被打断
-        locate: 同时出现 starting 与 Repeat stop / stop 时 window nullptr，按时间线看谁先谁后
-        symbols: [PictureInPictureController]
-        exception: true
-    key_logs:
-      - id: LOG-STARTING
-        meaning: 窗口已在启动中，重复 start，断在状态机
-        regex: pipWindow\s+is\s+starting,\s*state:\s*\d+
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: warn
-        exception: true
-      - id: LOG-REPEAT-STOP
-        meaning: 重复 stop，日志 curState 即当前状态
-        regex: Repeat\s+stop\s+request(?:,\s*curState:\s*\d+)?
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: warn
-        exception: true
-      - id: LOG-STOP-WIN-NULL
-        meaning: stop 时 window 已空，时序/生命周期问题
-        regex: window\s+is\s+nullptr\s+when\s+stop\s+pip
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-STOP-CLIENT-NULL
-        meaning: 客户端 stop 时 window 为空
-        regex: window\s+is\s+null(?:\s+when\s+stop\s+from\s+client)?
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-DELETE-BEFORE-STOP
-        meaning: 未 stop 就 delete，断在销毁时序
-        regex: could\s+not\s+delete\s+before\s+stopPip
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-STATE-STOPPING
-        meaning: 当前已是 STOPPING/STOPPED，不能再按「启动中」处理
-        regex: PiPWindowState\s+\d+,\s*is\s+STATE_STOPPING\s+or\s+STATE_STOPPED
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: warn
-        exception: true
-  - id: SC-UPDATE-SIZE
-    title: 非激活态改内容尺寸
-    boundary: APP_MISUSE
-    priority: 16
-    summary: PiP 未激活时 UpdateContentSize。命中 UpdateContentSize is disabled when state → 断在控制器。
-    callchain:
-      - layer_id: L-JS
-        name: 改内容尺寸
-        symbols: [PiPController.startPiP]
-      - layer_id: L-WM-CLIENT
-        name: 非激活态拒绝改尺寸
-        locate: 日志中的 state 数字即当前 PiPWindowState
-        symbols: [PictureInPictureController]
-        exception: true
-    key_logs:
-      - id: LOG-UPDATE-SIZE
-        meaning: 当前 state 不允许 UpdateContentSize，看 state 数字
-        regex: UpdateContentSize\s+is\s+disabled\s+when\s+state:\s*\d+
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: warn
-        exception: true
-  - id: SC-RESTORE-NAV
-    title: 还原原页 / Navigation 失败
-    boundary: CROSS_NAV
-    priority: 15
-    summary: stop/还原时拿不到 Navigation。命中 Get navController error / Navigation operate failed → 断在还原原页（依赖 ArkUI Navigation）。
-    callchain:
-      - layer_id: L-JS
-        name: stopPiP / 还原
-        symbols: [PiPController.stopPiP]
-      - layer_id: L-WM-CLIENT
-        name: 发起还原原页
-        do: PictureInPictureController 取 navController 并 operate
-        symbols: [PictureInPictureController]
-      - layer_id: L-NAV
-        name: Navigation 依赖
-        locate: navController 失败则本层为异常点，单子打 ArkUI-Navigation；WMS-PiP 为 involved
-        symbols: [navController]
-        exception: true
-    key_logs:
-      - id: LOG-NAV-GET
-        meaning: 取 navController 失败，还原原页断在 Navigation 依赖
-        regex: (?:Get\s+navController\s+error|GetNavController\s+info\s+error)
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-NAV-OPERATE
-        meaning: Navigation operate 失败，还原原页失败
+      - id: FAIL-START-NAV
+        title: Navigation 操作失败
+        kind: 依赖失败
+        when: start 前缓存原页失败，文档对应 1300013
+        meaning: 断在 Navigation，窗口未拉起
+        locate: 对照 Get navController error / Top is not navDestination
         regex: Navigation\s+operate\s+failed
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
         flags: i
-        severity: error
-        exception: true
-      - id: LOG-NAV-TOP
-        meaning: 栈顶不是 navDestination，还原目标不对
+        layer_id: L-DEP-NAV
+        function: navController
+      - id: FAIL-START-NAV-CTRL
+        title: 拿不到 navController
+        kind: 依赖失败
+        when: 配置了 navigationId 但主窗 UIContent 上找不到
+        meaning: 断在 Navigation
+        regex: Get\s+navController\s+error
+        flags: i
+        layer_id: L-DEP-NAV
+        function: navController
+      - id: FAIL-START-NAV-TOP
+        title: 栈顶不是 NavDestination
+        kind: 依赖失败
+        when: Navigation 栈顶不是可缓存页面
+        meaning: 断在 Navigation
         regex: Top\s+is\s+not\s+navDestination
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
         flags: i
-        severity: error
-        exception: true
-      - id: LOG-NAV-NULL
-        meaning: navController 指针空，应用未配 Navigation
+        layer_id: L-DEP-NAV
+        function: navController
+      - id: FAIL-START-CREATE-WIN
+        title: 创建 PiP 窗口失败
+        kind: 框架缺陷
+        when: FloatWindowManager.CreatePipWindow 失败，文档对应 1300013 / 1300034
+        meaning: 控制器已放行，窗口服务没建出窗
+        locate: 若同时有 App has already started float view 则是与其它浮窗冲突（1300034）
+        regex: '(?:Create\s+pip\s+window\s+failed|Window\s+create\s+failed,\s*reason:)'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatWindowManager
+      - id: FAIL-START-SHOW
+        title: 显示 PiP 窗口失败
+        kind: 框架缺陷
+        when: window.Show 失败，文档对应 1300014
+        meaning: 窗已创建但没 show 出来
+        regex: Show\s+pip\s+window\s+failed
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureControllerBase
+      - id: FAIL-START-XCOMP
+        title: XComponent 挂接失败
+        kind: 依赖失败
+        when: 非 typeNode 路径 setXController 时空指针，画面会黑
+        meaning: 启动链路里内容节点没挂上
+        regex: error\s+when\s+setXController[\s\S]{0,80}?xComponentController\s+is\s+null
+        flags: i
+        layer_id: L-DEP-XCOMP
+        function: XComponentController
+
+  - id: stop
+    title: 停止
+    api: PiPController.stopPiP
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 stopPiP, do: 停止画中画；错误码 1300011 / 1300012 / 1300015, symbols: [PiPController.stopPiP, OH_PictureInPicture_StopPip] }
+      - { layer_id: L-NAPI, name: NAPI 转发, do: StopPictureInPictureFromClient, symbols: [JsPipController] }
+      - { layer_id: L-WM-CLIENT, name: 状态机与销毁, do: STOPPING 后销毁窗口并还原主窗, symbols: [PictureInPictureControllerBase] }
+      - { layer_id: L-DEP-NAV, name: 还原原页, do: RestorePictureInPictureWindow / PushInPIP 回退, symbols: [navController] }
+    enter:
+      - id: IN-STOP
+        meaning: 已进入 stopPiP
+        regex: OnStopPictureInPicture\s+is\s+called
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+    success:
+      - id: OK-STOP
+        meaning: 窗口已停止
+        regex: pip\s+window\s+stop\s+success
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureControllerBase
+      - id: OK-STOP-EVENT
+        meaning: HiSysEvent 上报停止
+        regex: '\bSTOP_PIP\b'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PiPReporter
+      - id: OK-RESTORE
+        meaning: 主窗还原完成
+        regex: restore\s+pip\s+main\s+window\s+finished
+        flags: i
+        layer_id: L-DEP-NAV
+        function: PictureInPictureController
+    failures:
+      - id: FAIL-STOP-REPEAT
+        title: 重复停止
+        kind: 应用误用
+        when: 已在 STOPPING / STOPPED / RESTORING，文档对应 1300015
+        meaning: 状态机拒绝，对照 curState
+        regex: 'Repeat\s+stop\s+request(?:,\s*curState:\s*\d+)?'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureControllerBase
+      - id: FAIL-STOP-NO-WIN
+        title: 窗口不存在
+        kind: 应用误用
+        when: 尚未 start 或已销毁再 stop，文档对应 1300012
+        meaning: 没有可停的 PiP 窗口
+        regex: '(?:window\s+is\s+null\s+when\s+stop\s+from\s+client|window\s+is\s+nullptr\s+when\s+stop\s+pip|window\s+is\s+nullptr\s+in\s+stop\s+pip\s+inner)'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureControllerBase
+      - id: FAIL-STOP-DESTROY
+        title: 销毁窗口失败
+        kind: 框架缺陷
+        when: DestroyFloatWindow 失败，文档对应 1300011
+        meaning: 停止过程中窗口销毁失败
+        regex: 'window\s+destroy\s+failed,\s*err:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureControllerBase
+      - id: FAIL-STOP-NAV
+        title: 还原时 navController 为空
+        kind: 依赖失败
+        when: stop/还原时找不到 Navigation
+        meaning: 窗口可能已停，原页没还原
         regex: navController\s+is\s+nullptr
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
         flags: i
-        severity: error
-        exception: true
-  - id: SC-BLACK-SCREEN
-    title: 内容节点 / XComponent 黑屏
-    boundary: CROSS_ARKUI
-    priority: 25
-    summary: start 路径绑定内容节点失败。命中 setXController / xComponent not set / typeNode / surface → 断在内容节点（可 CROSS ArkUI）。
+        layer_id: L-DEP-NAV
+        function: navController
+
+  - id: autostart
+    title: 自动启动
+    api: PiPController.setAutoStartEnabled
     callchain:
-      - layer_id: L-JS
-        name: startPiP
-        symbols: [PiPController.startPiP]
-      - layer_id: L-WM-CLIENT
-        name: 绑定内容节点
-        do: setXController / surface / typeNode
-        symbols: [PictureInPictureController]
-      - layer_id: L-ARKUI
-        name: XComponent / typeNode
-        locate: 这批日志出现在 start 过程中；若 start 已成功只是画面黑，优先 ArkUI
-        symbols: [XComponentController, typeNode]
-        exception: true
-    key_logs:
-      - id: LOG-XCC-SET
-        meaning: setXController 失败，内容节点绑定断开
-        regex: error\s+when\s+setXController
+      - { layer_id: L-JS, name: 应用调用 setAutoStartEnabled, symbols: [PiPController.setAutoStartEnabled] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsPipController] }
+      - { layer_id: L-WM-CLIENT, name: 登记自动启动, do: 主窗退后台时由框架再走 start 路径, symbols: [PictureInPictureController, PictureInPictureManager] }
+    enter:
+      - id: IN-AUTOSTART
+        meaning: 已进入 setAutoStartEnabled
+        regex: OnSetAutoStartEnabled\s+is\s+called
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+    success:
+      - id: OK-AUTOSTART
+        meaning: 已登记或取消自动启动
+        regex: 'enable:\s*\d+,\s*mainWindow:\s*\d+'
+        flags: i
         layer_id: L-WM-CLIENT
         function: PictureInPictureController
+    failures:
+      - id: FAIL-AUTOSTART-ARG
+        title: 参数不是 bool
+        kind: 应用误用
+        when: 入参转换失败
+        meaning: 断在 NAPI
+        regex: Failed\s+to\s+convert\s+parameter\s+to\s+bool
         flags: i
-        severity: error
-        exception: true
-      - id: LOG-XCOMP-NOT-SET
-        meaning: 主窗未设置 xComponent，画面无法呈现
-        regex: main\s+window\s+xComponent\s+not\s+set
+        layer_id: L-NAPI
+        function: JsPipController
+      - id: FAIL-AUTOSTART-NAV
+        title: 自动启动时 Navigation 失败
+        kind: 依赖失败
+        when: 开启自动启动时缓存 Navigation 失败
+        meaning: 自动启动登记不完整
+        regex: Navigation\s+operate\s+failed
+        flags: i
+        layer_id: L-DEP-NAV
+        function: navController
+
+  - id: updateNode
+    title: 更新内容节点
+    api: PiPController.updateContentNode
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 updateContentNode, do: 仅 typeNode 创建路径使用, symbols: [PiPController.updateContentNode] }
+      - { layer_id: L-NAPI, name: NAPI 校验 typeNode, symbols: [JsPipController] }
+      - { layer_id: L-WM-CLIENT, name: 更新节点, symbols: [PictureInPictureController] }
+    enter:
+      - id: IN-NODE
+        meaning: 已进入 updateContentNode
+        regex: OnUpdateContentNode\s+is\s+called
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+    success:
+      - id: OK-NODE
+        meaning: 内容节点更新成功
+        regex: updateNode\s+success
+        flags: i
         layer_id: L-WM-CLIENT
         function: PictureInPictureController
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-SURFACE
-        meaning: 参数转 surface 失败，内容节点/图形侧
-        regex: Failed\s+to\s+convert\s+parameter\s+to\s+surface
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-TYPENODE
-        meaning: typeNode 非法，内容节点错误
+    failures:
+      - id: FAIL-NODE-INVALID
+        title: typeNode 非法
+        kind: 应用误用
+        when: 未传或类型不对，文档对应 401
+        meaning: 断在 NAPI
         regex: Invalid\s+typeNode
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
         flags: i
-        severity: error
-        exception: true
-  - id: SC-FW-CONTROLLER
-    title: 框架拿不到 PiP controller
-    boundary: FRAMEWORK_WM
-    priority: 35
-    summary: 框架拿不到/写不了 PiP controller。命中 Failed to get pictureInPictureController / controller is nullptr → 断在 WM 客户端。
-    callchain:
-      - layer_id: L-JS
-        name: start/stop 或控件事件
-        symbols: [PiPController.startPiP, PiPController.stopPiP]
-      - layer_id: L-NAPI
-        name: NAPI 转发
-        symbols: [JsPipController]
-      - layer_id: L-WM-CLIENT
-        name: 获取/持有 controller
-        locate: Failed to get pictureInPictureController 或 controller is nullptr 即停在本层
-        symbols: [PictureInPictureManager, PictureInPictureController]
-        exception: true
-    key_logs:
-      - id: LOG-GET-CTRL
-        meaning: 拿不到 pictureInPictureController，断在 WM 客户端
-        regex: Failed\s+to\s+get\s+(?:web)?pictureInPictureController
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureManager
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-CTRL-NULL
-        meaning: controller 为空，后续启停都会失败
-        regex: \bcontroller\s+is\s+nullptr\b
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-ACTION-MISSING
-        meaning: 控件 actionEvent 未注册，埋点/控件路径
-        regex: actionEvent\s+\S+\s+not\s+found
-        layer_id: L-OBS
-        function: PiPReporter
-        flags: i
-        severity: error
-        exception: true
-      - id: LOG-HISYS-WRITE-FAIL
-        meaning: HiSysEvent 写入失败，辅助信息，一般不是根因
-        regex: Write\s+HiSysEvent\s+error
-        layer_id: L-OBS
-        function: PiPReporter
-        flags: i
-        severity: error
-        exception: true
-  - id: SC-INVALID-SCREEN
-    title: 多屏 screenId 非法
-    boundary: CROSS_MULTI_SCREEN
-    priority: 35
-    summary: 多屏 screenId 非法。命中 invalid screenId → 断在 Session/PipController。
-    callchain:
-      - layer_id: L-JS
-        name: 带 screen 的 PiP 操作
-        symbols: [PiPController.startPiP]
-      - layer_id: L-WM-CLIENT
-        name: 控制器
-        symbols: [PictureInPictureController]
-      - layer_id: L-SESSION
-        name: 多屏策略
-        locate: invalid screenId 即停在 PipController / SceneSession
-        symbols: [PipController]
-        exception: true
-    key_logs:
-      - id: LOG-SCREEN
-        meaning: screenId 非法，断在多屏 Session/PipController
-        regex: invalid\s+screenId
-        layer_id: L-SESSION
-        function: PipController
-        flags: i
-        severity: error
-        exception: true
-  - id: SC-START-FAIL
-    title: startPiP 失败（埋点/状态）
-    boundary: APP_MISUSE
-    priority: 20
-    summary: startPiP 失败（埋点原因或非法状态）。命中 OPERATION_ERROR_REASON 看失败原因；PiPWindowState STOPPING/STOPPED 说明在停/已停时还 start。
-    callchain:
-      - layer_id: L-JS
-        name: startPiP
-        symbols: [PiPController.startPiP]
-      - layer_id: L-NAPI
-        name: NAPI 转发
-        symbols: [JsPipController]
-      - layer_id: L-WM-CLIENT
-        name: 启动状态机
-        locate: 先看是否有 OPERATION_ERROR_REASON；再看 PiPWindowState 是否 STOPPING/STOPPED
-        symbols: [PictureInPictureController]
-        exception: true
-      - layer_id: L-OBS
-        name: HiSysEvent 埋点
-        do: PiPReporter 上报 START_PIP / OPERATION_ERROR_REASON，辅助定因不是断点本身
-        symbols: [PiPReporter]
-    key_logs:
-      - id: LOG-HISYS-REASON
-        meaning: START_PIP 失败原因码，配合同段 WMS_PIP 日志看断在哪一层
-        regex: \bOPERATION_ERROR_REASON\b
-        layer_id: L-OBS
-        function: PiPReporter
-        severity: error
-        exception: true
-      - id: LOG-STATE-STOPPING
-        meaning: 当前已是 STOPPING/STOPPED，不能再按「启动中」处理
-        regex: PiPWindowState\s+\d+,\s*is\s+STATE_STOPPING\s+or\s+STATE_STOPPED
-        layer_id: L-WM-CLIENT
-        function: PictureInPictureController
-        flags: i
-        severity: warn
-        exception: true
+        layer_id: L-NAPI
+        function: JsPipController

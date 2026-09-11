@@ -1,16 +1,28 @@
-# Watchman 模块插件 YAML 2.2
-# 八类关键信息（别人给这一份即可适配）：
-#   1. log_whitelist     日志白名单：命中 = 当前这份 YAML 的模块问题
-#   2. log_blacklist     日志黑名单：命中 = 其他模块问题，必须填 to_module（对方 module_id）；对方未接入则为「非窗口问题：名称」
-#   3. apis.internal     对内接口：给引擎/AI 对照调用链与日志，不进前端多选
-#   4. apis.external     故障接口（对外）：前端按预分流模块下拉多选
-#   5. apis.dependencies 外部依赖接口：本模块调用的其他模块接口，仅辅助定位
-#   6. scenarios         本模块常见场景
-#   7. scenarios.callchain / key_logs  该场景对应的调用链与关键日志
-#   8. collect           只给用户一条正则，复制到 BetaClub 搜集日志
+# Watchman 模块插件 YAML 2.3
+#
+# 给人看的（title / meaning / do / locate / when / kind / description）一律简体中文。
+# 只保留英文：API 符号、文件路径、日志原文与正则、错误码、稳定 ID、tag。
+#
+# 八类：
+#   1. log_whitelist     白名单：命中 = 当前这份 YAML 的模块问题（阶段一）
+#   2. log_blacklist     黑名单：命中 = 其他模块问题，必须填 to_module；对方未接入则为「非窗口问题：名称」
+#   3. apis.internal     对内接口：对照调用链，不进前端多选
+#   4. apis.external     对外接口：前端按预分流模块勾选
+#   5. apis.dependencies 外部依赖：本模块调用的其他模块接口
+#   6. atoms             原子 = 一次对外操作（创建/启动/停止），不是「一个故障故事」
+#   7. atoms[].callchain + enter / success / failures
+#   8. collect.regex     只给用户一条正则，复制到 BetaClub
+#
+# 阶段二怎么用（引擎，不是查表套故事）：
+#   日志按行顺序扫各原子的 进入 / 成功 / 已知失败
+#   → 还原时间线：创建✓ → 启动✓ → 停止✗
+#   → 命中某原子「已知失败」：按设计失败，标红该失败所在层
+#   → 有「进入」但既无成功也无已知失败：未知，更像真实 bug，标红进入之后下一层
+#   禁止再写 SC-第二次启动失败 这种组合故事；组合由时间线自动拼出来
+#
 # 复制本目录为 modules/<id>/，改 module_id 与 enabled: true。
 
-schema_version: "2.2.0"
+schema_version: "2.3.0"
 module_id: replace_me
 enabled: false
 
@@ -21,66 +33,128 @@ meta:
   field_id: RF-REPLACE
   field_name: （责任田显示名）
   description: |
-    做什么。
-    不做什么（避免和相邻模块抢分流）。
+    【做什么】一句话说清这个模块给应用提供什么。
+    【典型现象】应分流到本模块的中文说法。
+    【不要分流】和相邻模块的边界，写中文模块名。
+    【怎么定位】阶段二用原子时间线回放，不套故障故事。
   owners: []
   kb:
     path: ""
     feature_dir: ""
 
-# 1. 日志白名单
+# 1. 日志白名单（分流用，确认「是本模块」）
 log_whitelist:
   - id: WL-TAG
     regex: '\bREPLACE_TAG\b'
     flags: i
     meaning: 本模块主 tag，命中即可确认归本模块
 
-# 2. 日志黑名单（命中则分流到 to_module 对应模块；该 id 尚未接入则为「非窗口问题：名称」）
+# 2. 日志黑名单（分流用，确认「是别人」）
 log_blacklist:
   - id: BL-OTHER
     regex: '\bOTHER_MODULE_TAG\b'
     flags: i
     to_module: other_module_id
     to_module_name: （对方模块中文名）
-    reason: "命中则归对方模块"
+    reason: 命中则归对方模块
     unless_whitelist: true
 
-# 3 / 4 / 5. 接口（仅 external 出现在前端勾选；internal / dependencies 给引擎对照调用链）
+# 3 / 4 / 5. 接口（仅 external 出现在前端勾选）
 apis:
   external:
-    - { id: ReplaceMe.create, label: ReplaceMe.create, role: "创建" }
+    - { id: ReplaceMe.create, label: ReplaceMe.create, role: 创建 }
+    - { id: ReplaceMe.start, label: ReplaceMe.start, role: 启动 }
   internal:
-    - { id: ReplaceMeController, label: ReplaceMeController, role: "框架实现，仅定位" }
+    - { id: ReplaceMeController, label: ReplaceMeController, role: 框架实现，仅定位 }
   dependencies:
-    - { id: OtherModule.foo, label: OtherModule.foo, module: other, role: "外部依赖，仅定位" }
+    - { id: OtherModule.foo, label: OtherModule.foo, module: other, role: 外部依赖，仅定位 }
 
-# 8. 给用户的唯一搜集正则（复制到 BetaClub，不要多条）
+# 8. 给用户的唯一搜集正则（各原子 enter/success/failures 的并集，不要多条）
 collect:
   title: 请复制下面这一条正则到 BetaClub 搜集日志
   where: BetaClub
   hint: 只需这一条。搜集后把命中行完整粘贴到阶段二
   regex: '\bREPLACE_TAG\b'
 
-# 6 + 7. 场景 = 一张「路径图」+ 若干「探针」
-# 调用链：本场景真实经过的层，自上而下；有且仅有一层 exception: true（断开层）
-# 关键日志：探针，不是第二份调用链。每条必须带 layer_id/function，对应调用链上的那一层；
-#          exception: true 的日志用来钉死异常点；meaning 写「命中=断在哪」
-scenarios:
-  - id: SC-FAIL
-    title: （场景中文名）
-    boundary: FRAMEWORK
-    priority: 10
-    summary: "命中 LOG-FAIL → 断在 L-CPP ReplaceMeController"
+# 6 + 7. 原子：代码里的一次对外调用
+# 调用链 = 这次调用真实经过的层（不要预先标 exception）
+# 进入 = 这次调用已经进框架（用来发现「进了但没下文」的真 bug）
+# 成功 = 这次调用走完了
+# 已知失败 = 按设计失败（应用误用 / 依赖失败）；kind 只能是下面三个中文之一：
+#   应用误用 | 依赖失败 | 框架缺陷
+# 未登记的失败不要硬编成故事；留给引擎报「未知」
+atoms:
+  - id: create
+    title: 创建
+    api: ReplaceMe.create
     callchain:
-      - { layer_id: L-JS, name: 应用调用, do: 调用对外接口, symbols: [ReplaceMe.create] }
-      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsReplaceMe] }
-      - { layer_id: L-CPP, name: 框架实现, locate: 命中 failed 日志即停在本层, symbols: [ReplaceMeController], exception: true }
-    key_logs:
-      - id: LOG-FAIL
-        meaning: 框架实现失败，断在 ReplaceMeController
-        regex: 'ReplaceMe\s+failed'
+      - { layer_id: L-JS, name: 应用调用, do: 组装参数并调用对外接口, symbols: [ReplaceMe.create] }
+      - { layer_id: L-NAPI, name: NAPI 校验与转发, do: 校验参数后转发到框架, symbols: [JsReplaceMe] }
+      - { layer_id: L-CPP, name: 框架实现, do: 真正创建, symbols: [ReplaceMeController] }
+    enter:
+      - id: IN-CREATE
+        meaning: 已进入创建
+        regex: 'ReplaceMe\s+create\s+enter'
+        flags: i
+        layer_id: L-NAPI
+        function: JsReplaceMe
+    success:
+      - id: OK-CREATE
+        meaning: 创建完成，已有控制器
+        regex: 'ReplaceMe\s+create\s+success'
         flags: i
         layer_id: L-CPP
         function: ReplaceMeController
-        severity: error
-        exception: true
+    failures:
+      - id: FAIL-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: 必填参数缺失或非法
+        meaning: 断在 NAPI，请求未进框架实现
+        locate: 看该行后半句，区分缺 context / 缺内容节点 / 模板不支持
+        regex: 'ReplaceMe\s+param\s+error'
+        flags: i
+        layer_id: L-NAPI
+        function: JsReplaceMe
+
+  - id: start
+    title: 启动
+    api: ReplaceMe.start
+    callchain:
+      - { layer_id: L-JS, name: 应用调用, do: 调用启动, symbols: [ReplaceMe.start] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsReplaceMe] }
+      - { layer_id: L-CPP, name: 状态机与窗口, do: 按当前状态决定放行或拒绝, symbols: [ReplaceMeController] }
+    enter:
+      - id: IN-START
+        meaning: 已进入启动
+        regex: 'ReplaceMe\s+start\s+enter'
+        flags: i
+        layer_id: L-NAPI
+        function: JsReplaceMe
+    success:
+      - id: OK-START
+        meaning: 启动完成
+        regex: 'ReplaceMe\s+start\s+success'
+        flags: i
+        layer_id: L-CPP
+        function: ReplaceMeController
+    failures:
+      - id: FAIL-REPEAT-START
+        title: 重复启动
+        kind: 应用误用
+        when: 已在启动中或已启动
+        meaning: 状态机拒绝本次启动
+        locate: 对照日志里的 state / curState
+        regex: 'ReplaceMe\s+already\s+starting'
+        flags: i
+        layer_id: L-CPP
+        function: ReplaceMeController
+      - id: FAIL-START-INTERNAL
+        title: 框架启动失败
+        kind: 框架缺陷
+        when: 参数合法且状态允许，但框架没把窗口拉起来
+        meaning: 启动已进入控制器但未完成
+        regex: 'ReplaceMe\s+start\s+failed'
+        flags: i
+        layer_id: L-CPP
+        function: ReplaceMeController

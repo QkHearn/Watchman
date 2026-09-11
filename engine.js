@@ -240,9 +240,39 @@ function collectOf(mod) {
   };
 }
 
+function atomsOf(mod) {
+  return arr(mod.atoms).filter((a) => a && a.id);
+}
+
 function flattenKeyLogs(mod) {
   const out = [];
   const seen = new Set();
+  const atoms = atomsOf(mod);
+  if (atoms.length) {
+    for (const atom of atoms) {
+      const packs = [
+        ["enter", arr(atom.enter)],
+        ["success", arr(atom.success)],
+        ["failure", arr(atom.failures)]
+      ];
+      for (const [probe, list] of packs) {
+        for (const lg of list) {
+          if (!lg || !lg.id) continue;
+          const key = atom.id + "\0" + lg.id;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(Object.assign({}, lg, {
+            atom_id: atom.id,
+            atom_title: atom.title || atom.id,
+            probe,
+            exception: probe === "failure",
+            scenario_ids: [atom.id]
+          }));
+        }
+      }
+    }
+    return out;
+  }
   for (const sc of scenariosOf(mod)) {
     for (const lg of arr(sc.key_logs)) {
       if (!lg || !lg.id) continue;
@@ -265,6 +295,7 @@ function scenarioException(sc) {
 
 function normalize(mod) {
   if (mod.__normalized) return mod;
+  mod.atoms = atomsOf(mod);
   mod.scenarios = scenariosOf(mod);
   mod.collect = (mod.collect || (mod.localize && mod.localize.collect)) || null;
   mod.log_whitelist = logWhitelist(mod);
@@ -421,7 +452,8 @@ function moduleCatalog(mod) {
   const g = apiGroups(mod);
   const fn = [];
   for (const a of g.external.concat(g.internal, g.dependencies)) fn.push(a.id);
-  for (const sc of scenariosOf(mod)) {
+  const chains = atomsOf(mod).concat(scenariosOf(mod));
+  for (const sc of chains) {
     for (const layer of arr(sc.callchain)) {
       for (const s of arr(layer.symbols || layer.entry_symbols)) fn.push(s);
     }
@@ -744,6 +776,12 @@ function matchLogs(mod, logsText) {
         layer_id: lg.layer_id,
         function: lg.function,
         meaning: lg.meaning || "",
+        title: lg.title || "",
+        kind: lg.kind || "",
+        locate: lg.locate || "",
+        probe: lg.probe || "",
+        atom_id: lg.atom_id || "",
+        atom_title: lg.atom_title || "",
         severity: lg.severity || "info",
         exception: lg.exception === true,
         scenario_ids: arr(lg.scenario_ids)
@@ -828,23 +866,140 @@ function exceptionPoints(mod, hits, scenarios) {
   return [points, primary];
 }
 
+function buildTimeline(mod, hits) {
+  const byId = new Map(atomsOf(mod).map((a) => [a.id, a]));
+  const ordered = (hits || []).slice().sort((a, b) => a.line_no - b.line_no);
+  const steps = [];
+  for (const h of ordered) {
+    if (!h.atom_id || !byId.has(h.atom_id)) continue;
+    const atom = byId.get(h.atom_id);
+    let step = steps[steps.length - 1];
+    if (!step || step.atom_id !== h.atom_id) {
+      step = {
+        atom_id: atom.id,
+        title: atom.title || atom.id,
+        api: atom.api || "",
+        status: "enter",
+        callchain: arr(atom.callchain),
+        events: []
+      };
+      steps.push(step);
+    }
+    step.events.push({
+      log_id: h.log_id,
+      probe: h.probe,
+      line_no: h.line_no,
+      line: h.line,
+      meaning: h.meaning || "",
+      layer_id: h.layer_id,
+      function: h.function
+    });
+    if (h.probe === "success") {
+      step.status = "ok";
+      delete step.failure;
+    }
+    if (h.probe === "failure") {
+      step.status = "fail";
+      step.failure = {
+        id: h.log_id,
+        title: h.title || h.meaning || h.log_id,
+        kind: h.kind || "",
+        meaning: h.meaning || "",
+        locate: h.locate || "",
+        layer_id: h.layer_id,
+        function: h.function
+      };
+    }
+  }
+  for (const s of steps) {
+    if (s.status === "enter") s.status = "unknown";
+  }
+  return steps;
+}
+
+function focusAtom(steps) {
+  if (!steps.length) return null;
+  return steps.slice().reverse().find((s) => s.status === "fail" || s.status === "unknown") || steps[steps.length - 1];
+}
+
+function atomChainWithMark(step) {
+  const chain = arr(step && step.callchain).map((c) => Object.assign({}, c, { exception: false }));
+  if (!chain.length) return [];
+  let layer = step.status === "fail" && step.failure ? step.failure.layer_id : "";
+  if (step.status === "unknown") {
+    const enter = (step.events || []).filter((e) => e.probe === "enter").pop();
+    const idx = enter ? chain.findIndex((c) => c.layer_id === enter.layer_id) : -1;
+    layer = idx >= 0 && chain[idx + 1] ? chain[idx + 1].layer_id : (enter && enter.layer_id) || chain[chain.length - 1].layer_id;
+  }
+  for (const c of chain) {
+    if (layer && c.layer_id === layer) c.exception = true;
+  }
+  if (layer && !chain.some((c) => c.exception) && chain.length) chain[chain.length - 1].exception = true;
+  return chain;
+}
+
 function localize(modId, logsText) {
   const mod = loadModule(modId);
   const hits = matchLogs(mod, logsText);
-  const scenarios = matchScenarios(mod, hits);
-  const [points, primary] = exceptionPoints(mod, hits, scenarios);
+  const timeline = atomsOf(mod).length ? buildTimeline(mod, hits) : [];
+  const focus = focusAtom(timeline);
+  const scenarios = timeline.length ? [] : matchScenarios(mod, hits);
+  const chain = focus ? atomChainWithMark(focus) : (scenarios[0] ? arr(scenarios[0].callchain) : []);
+  const [points, primaryFromOld] = exceptionPoints(mod, hits, scenarios);
   const noHit = hits.length === 0;
   const foreign = blacklistHits(mod, { logs: logsText }, whitelistHits(mod, { logs: logsText }).length > 0);
-  return {
-    module_id: mod.module_id,
-    module_name: mod.meta && mod.meta.name,
-    yaml: modulePath(modId),
-    matched_logs: hits,
-    callchain_hits: points,
-    callchain_exception_point: primary,
-    scenario_callchain: scenarios[0] ? scenarios[0].callchain : [],
-    matched_scenarios: scenarios,
-    exception_scenario: scenarios[0]
+
+  let primary = primaryFromOld;
+  let hypothesis;
+  let confidence;
+  let exceptionScenario = null;
+
+  if (timeline.length) {
+    const exLayer = chain.find((c) => c.exception) || {};
+    primary = focus && (focus.status === "fail" || focus.status === "unknown")
+      ? {
+          layer_id: exLayer.layer_id || (focus.failure && focus.failure.layer_id) || "",
+          functions: [focus.failure && focus.failure.function, ...(exLayer.symbols || [])].filter(Boolean),
+          logs: (focus.events || []).filter((e) => e.probe === "failure" || focus.status === "unknown").map((e) => ({
+            log_id: e.log_id,
+            line: e.line,
+            meaning: e.meaning
+          }))
+        }
+      : primary;
+    if (noHit) {
+      hypothesis = "用户日志未命中本模块原子探针，禁止编造；请人工改模块";
+      confidence = "low";
+    } else if (focus && focus.status === "fail") {
+      hypothesis = "时间线断在「" + focus.title + "」：" + (focus.failure.kind || "") +
+        (focus.failure.kind ? " · " : "") + (focus.failure.meaning || focus.failure.title);
+      confidence = "high";
+      exceptionScenario = {
+        id: focus.atom_id,
+        title: focus.title + (focus.failure.title ? " · " + focus.failure.title : ""),
+        summary: hypothesis,
+        locate: focus.failure.locate || "",
+        boundary: focus.failure.kind || ""
+      };
+    } else if (focus && focus.status === "unknown") {
+      hypothesis = "「" + focus.title + "」已进入，但既无成功也无已知失败，更像真实缺陷";
+      confidence = "medium";
+      exceptionScenario = {
+        id: focus.atom_id,
+        title: focus.title + " · 未知",
+        summary: hypothesis,
+        locate: "对照进入日志之后应出现的成功句，看停在调用链哪一层",
+        boundary: "未知"
+      };
+    } else {
+      hypothesis = "各原子均走完，未命中已知失败";
+      confidence = "medium";
+      exceptionScenario = focus
+        ? { id: focus.atom_id, title: focus.title, summary: hypothesis, locate: "", boundary: "" }
+        : null;
+    }
+  } else {
+    exceptionScenario = scenarios[0]
       ? {
           id: scenarios[0].id,
           title: scenarios[0].title,
@@ -852,13 +1007,28 @@ function localize(modId, logsText) {
           locate: scenarios[0].locate || "",
           boundary: scenarios[0].boundary
         }
-      : null,
-    confidence: noHit ? "low" : scenarios.length && primary ? "high" : "medium",
-    hypothesis: noHit
+      : null;
+    confidence = noHit ? "low" : scenarios.length && primary ? "high" : "medium";
+    hypothesis = noHit
       ? "用户日志未命中本模块场景关键日志，禁止编造场景；请人工改模块"
       : scenarios[0]
         ? scenarios[0].summary
-        : "命中关键日志但未映射到场景，请补全该模块 YAML 场景",
+        : "命中关键日志但未映射到场景，请补全该模块 YAML 场景";
+  }
+
+  return {
+    module_id: mod.module_id,
+    module_name: mod.meta && mod.meta.name,
+    yaml: modulePath(modId),
+    matched_logs: hits,
+    timeline,
+    callchain_hits: points,
+    callchain_exception_point: primary,
+    scenario_callchain: chain,
+    matched_scenarios: scenarios,
+    exception_scenario: exceptionScenario,
+    confidence,
+    hypothesis,
     collect: collectOf(mod),
     assist_apis: {
       internal: apiGroups(mod).internal,
@@ -874,7 +1044,7 @@ function localize(modId, logsText) {
     reassign_buttons: reassignButtons(modId, foreign.map((b) => b.to_module)),
     next_actions: noHit
       ? ["YAML 0 命中：核对是否用 BetaClub 按 collect 正则搜集，或点按钮改到其他模块"]
-      : ["对照该场景调用链异常点查看该层函数与关键日志"],
+      : ["按时间线对照该原子调用链上的标红层"],
     auto_correct: false
   };
 }
@@ -884,8 +1054,22 @@ function validate(modId) {
   const errors = [];
   if (!logWhitelist(mod).length) errors.push("missing log_whitelist");
   if (!collectOf(mod) || !collectOf(mod).regex) errors.push("missing collect.regex");
+  const atoms = atomsOf(mod);
   const scs = scenariosOf(mod);
-  if (!scs.length) errors.push("missing scenarios");
+  if (!atoms.length && !scs.length) errors.push("missing atoms");
+  const kinds = new Set(["应用误用", "依赖失败", "框架缺陷"]);
+  for (const atom of atoms) {
+    if (!arr(atom.callchain).length) errors.push("atom " + atom.id + " missing callchain");
+    const probes = arr(atom.enter).concat(arr(atom.success), arr(atom.failures));
+    if (!probes.length) errors.push("atom " + atom.id + " missing enter/success/failures");
+    for (const lg of probes) {
+      if (!lg.regex) errors.push("atom " + atom.id + " log " + (lg.id || "?") + " missing regex");
+      if (!lg.layer_id) errors.push("atom " + atom.id + " log " + (lg.id || "?") + " missing layer_id");
+    }
+    for (const lg of arr(atom.failures)) {
+      if (lg.kind && !kinds.has(lg.kind)) errors.push("atom " + atom.id + " failure " + lg.id + " kind 必须是 应用误用/依赖失败/框架缺陷");
+    }
+  }
   for (const w of logWhitelist(mod)) {
     if (!w.regex) errors.push("log_whitelist " + w.id + " missing regex");
   }

@@ -243,4 +243,10 @@ tbody tr:hover { background: rgba(255,255,255,0.35); }
 .chain-step.ex { background: rgba(138, 61, 61, 0.08); margin: 0 -8px; padding: 8px;
   border-radius: 10px; border-bottom: 0; }
 .chain-step.ex .n { background: var(--bad); color: #fff; }
+.tl { display: flex; flex-direction: column; gap: 6px; margin: 0 0 12px; }
+.tl-step { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid rgba(0,0,0,.06); }
+.tl-step .mark { width: 1.4em; font-weight: 700; }
+.tl-step.ok .mark { color: #2a7a45; }
+.tl-step.fail .mark { color: var(--bad); }
+.tl-step.unknown .mark { color: #b58116; }
 

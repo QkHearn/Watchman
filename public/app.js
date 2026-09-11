@@ -193,6 +193,26 @@ function scoresHtml(scores) {
   return `<div class="k">模块打分</div>${rows}`;
 }
 
+function timelineHtml(steps) {
+  const list = steps || [];
+  if (!list.length) return "";
+  const mark = { ok: "✓", fail: "✗", unknown: "?", enter: "·" };
+  const rows = list.map((s) => {
+    const fail = s.failure || {};
+    const extra = s.status === "fail"
+      ? `${escapeHtml(fail.kind || "")}${fail.kind && fail.title ? " · " : ""}${escapeHtml(fail.title || "")}`
+      : s.status === "unknown" ? "已进入，无成功也无已知失败" : "";
+    return `<div class="tl-step ${escapeHtml(s.status)}">
+      <span class="mark">${mark[s.status] || "·"}</span>
+      <div>
+        <div class="v">${escapeHtml(s.title || s.atom_id)}${s.api ? " · " + escapeHtml(s.api) : ""}</div>
+        ${extra ? `<p class="meta">${extra}</p>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+  return `<div class="k">时间线（按日志顺序回放原子）</div><div class="tl">${rows}</div>`;
+}
+
 function chainHtml(chain) {
   if (!chain || !chain.length) return "";
   const steps = chain.map((c, i) => {
@@ -619,9 +639,9 @@ $("btnLocalize").addEventListener("click", async () => {
   if (!state.module_id) return;
   const btn = $("btnLocalize");
   const stop = startBusy("locOut", "正在定位", [
-    "对照本模块场景关键日志",
-    "映射命中场景",
-    "在调用链上标异常点"
+    "对照本模块原子探针",
+    "按日志顺序还原时间线",
+    "在断开的原子调用链上标红"
   ]);
   btn.disabled = true;
   btn.classList.add("busy-btn");
@@ -636,18 +656,19 @@ $("btnLocalize").addEventListener("click", async () => {
       `${h.line_no}  [${h.log_id}] ${h.layer_id} ${h.function || ""}${h.meaning ? "  · " + h.meaning : ""}\n    ${h.line}`
     ).join("\n");
     el.innerHTML = `
-      <div class="k">场景</div>
-      <div class="v">${sc ? `${escapeHtml(sc.title)} · ${escapeHtml(sc.id)}` : "未映射到场景"}</div>
+      ${timelineHtml(r.timeline)}
+      <div class="k">当前原子</div>
+      <div class="v">${sc ? `${escapeHtml(sc.title)} · ${escapeHtml(sc.id)}` : "未映射到原子"}</div>
       <p>${escapeHtml(r.hypothesis || "")}</p>
       ${sc && sc.locate ? `<p class="meta">${escapeHtml(sc.locate)}</p>` : ""}
       ${chainHtml(r.scenario_callchain)}
       <div class="point">
-        <div class="k">调用链异常点</div>
+        <div class="k">调用链断开层</div>
         <div class="v">${pt ? `${escapeHtml(pt.layer_id)} / ${(pt.functions || []).map(escapeHtml).join(", ") || "—"}` : "无"}</div>
         ${pt && pt.logs && pt.logs.length ? `<pre>${escapeHtml(pt.logs.map((l) => (l.meaning ? l.meaning + "\n" : "") + l.log_id + "  " + l.line).join("\n")).trim()}</pre>` : ""}
       </div>
-      <div class="k">命中的关键日志</div>
-      <pre>${escapeHtml(hits || "场景关键日志 0 命中")}</pre>
+      <div class="k">命中的探针</div>
+      <pre>${escapeHtml(hits || "原子探针 0 命中")}</pre>
       ${foreignHtml(r.foreign_hits)}
       ${reassignHtml(r.reassign_buttons || [], [])}
     `;

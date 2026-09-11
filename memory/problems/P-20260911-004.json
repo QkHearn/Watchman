@@ -1,0 +1,23 @@
+{
+  "id": "P-20260911-004",
+  "created_at": "2026-09-11T07:23:47.624Z",
+  "updated_at": "2026-09-11T07:34:23.254Z",
+  "title": "抖音小窗口无法打开",
+  "text": "抖音小窗口无法打开",
+  "apis": [],
+  "errors": [],
+  "snippet": "",
+  "logs": "",
+  "module_id": "pip",
+  "module_name": "画中画",
+  "status": "routed",
+  "confidence": "medium",
+  "scenario_id": "",
+  "scenario_title": "",
+  "exception_layer": "",
+  "exception_functions": [],
+  "hypothesis": "",
+  "route_evidence": [
+    "AI-DESC"
+  ]
+}

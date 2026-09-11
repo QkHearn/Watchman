@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Watchman</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="orb orb-a"></div>
+  <div class="orb orb-b"></div>
+  <header class="bar glass">
+    <div class="brand">
+      <span class="mark">W</span>
+      <div>
+        <strong>Watchman</strong>
+        <span class="sub">问题分流与定位</span>
+      </div>
+    </div>
+    <nav>
+      <button type="button" class="tab on" data-view="work" id="tabWork">工单</button>
+      <button type="button" class="tab" data-view="list" id="tabList">问题列表</button>
+    </nav>
+    <button type="button" class="ghost" id="btnTpl">下载 YAML 模板</button>
+    <button type="button" class="ghost" id="btnUpload">上传模块 YAML</button>
+    <input id="yamlFile" type="file" accept=".yaml,.yml,text/yaml" hidden />
+    <button type="button" class="ghost" id="btnNew">新建问题</button>
+  </header>
+
+  <section id="viewWork" class="view">
+    <div class="steps">
+      <button type="button" class="step on" id="stepTab1">
+        <span class="n">1</span>
+        分流
+      </button>
+      <span class="steps-line"></span>
+      <button type="button" class="step" id="stepTab2" disabled>
+        <span class="n">2</span>
+        定位
+      </button>
+      <span class="meta grow" id="problemMeta">未保存</span>
+    </div>
+
+    <article id="stageRoute" class="panel glass">
+      <header class="panel-h">
+        <h2>阶段一 · 分流</h2>
+        <span class="meta">先判定模块，再进入定位</span>
+      </header>
+      <label for="preModule">预分流模块 <em>日志白/黑名单优先，可覆盖此项；选「其他」则按描述自动匹配</em></label>
+      <select id="preModule">
+        <option value="other">其他（自动分流）</option>
+      </select>
+      <label for="text">问题现象</label>
+      <textarea id="text" rows="3" placeholder="例如：连续两次 startPiP，第二次失败"></textarea>
+      <label>故障接口 <em>可选，来自当前预分流模块的 YAML</em></label>
+      <div class="api-picker" id="apiPicker">
+        <button type="button" class="api-trigger" id="apiTrigger" disabled>请先选择预分流模块</button>
+        <div class="api-menu hidden" id="apiMenu"></div>
+        <div class="api-picked" id="apiPicked"></div>
+      </div>
+      <label for="errors">错误码 <em>可选</em></label>
+      <input id="errors" placeholder="没有错误码可留空" />
+      <label for="snippet">日志片段 <em>可选，帮助分流</em></label>
+      <textarea id="snippet" rows="4" placeholder="可先贴一小段；完整日志用阶段二正则去 BetaClub 搜集后再贴"></textarea>
+      <div class="actions">
+        <button type="button" class="primary" id="btnRoute">开始分流</button>
+        <button type="button" class="ghost" id="btnSave">保存到列表</button>
+      </div>
+      <div id="routeOut" class="out hidden"></div>
+    </article>
+
+    <article id="stageLocalize" class="panel glass hidden">
+      <header class="panel-h">
+        <h2>阶段二 · 定位</h2>
+        <span class="meta">当前模块 <code id="curModule">—</code></span>
+      </header>
+      <div id="stage2Collect" class="collect-box"></div>
+      <label for="logs">完整日志</label>
+      <textarea id="logs" rows="16" placeholder="从 BetaClub 用上方正则搜集后，把命中行完整粘贴到这里"></textarea>
+      <div class="actions">
+        <button type="button" class="ghost" id="btnBackStage1">返回阶段一</button>
+        <button type="button" class="primary" id="btnLocalize" disabled>开始定位</button>
+        <button type="button" class="ghost" id="btnSave2">保存到列表</button>
+      </div>
+      <div id="locOut" class="out hidden"></div>
+    </article>
+  </section>
+
+  <section id="viewList" class="view hidden">
+    <div class="toolbar glass">
+      <input id="q" placeholder="搜索现象、模块、场景、错误码…" />
+      <select id="fModule"><option value="">全部模块</option></select>
+      <select id="fStatus">
+        <option value="">全部状态</option>
+        <option value="draft">草稿</option>
+        <option value="routed">已分流</option>
+        <option value="localized">已定位</option>
+      </select>
+      <select id="fSort">
+        <option value="time_desc">时间新→旧</option>
+        <option value="time_asc">时间旧→新</option>
+      </select>
+      <button type="button" class="ghost" id="btnExportJson">导出 JSON</button>
+      <button type="button" class="ghost" id="btnExportXls">导出 Excel</button>
+    </div>
+    <p class="count" id="listCount"></p>
+    <div class="table-wrap glass">
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>现象</th>
+            <th>模块</th>
+            <th>状态</th>
+            <th>错误码</th>
+            <th>场景 / 异常点</th>
+          </tr>
+        </thead>
+        <tbody id="listBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>

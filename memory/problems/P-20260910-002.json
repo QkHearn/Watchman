@@ -1,0 +1,25 @@
+{
+  "id": "P-20260910-002",
+  "created_at": "2026-09-10T11:56:06.033Z",
+  "updated_at": "2026-09-10T11:56:06.033Z",
+  "title": "create 报 401",
+  "text": "create 报 401",
+  "apis": [
+    "PiPWindow.create"
+  ],
+  "errors": [
+    "401"
+  ],
+  "snippet": "",
+  "logs": "",
+  "module_id": "pip",
+  "module_name": "画中画",
+  "status": "localized",
+  "confidence": "",
+  "scenario_id": "",
+  "scenario_title": "创建参数非法",
+  "exception_layer": "L-NAPI",
+  "exception_functions": [],
+  "hypothesis": "",
+  "route_evidence": []
+}

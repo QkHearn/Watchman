@@ -1,0 +1,14 @@
+{
+  "name": "watchman",
+  "version": "1.0.0",
+  "private": true,
+  "description": "YAML 插件式问题分流与定位台",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "validate": "node -e \"require('./engine').validate('pip')\" "
+  },
+  "dependencies": {
+    "js-yaml": "^4.3.2"
+  }
+}

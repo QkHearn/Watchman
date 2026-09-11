@@ -1,0 +1,23 @@
+{
+  "id": "P-20260911-006",
+  "created_at": "2026-09-11T07:53:33.782Z",
+  "updated_at": "2026-09-11T07:53:33.782Z",
+  "title": "抖音画中画白屏",
+  "text": "抖音画中画白屏",
+  "apis": [],
+  "errors": [],
+  "snippet": "",
+  "logs": "",
+  "module_id": "pip",
+  "module_name": "画中画",
+  "status": "routed",
+  "confidence": "medium",
+  "scenario_id": "",
+  "scenario_title": "",
+  "exception_layer": "",
+  "exception_functions": [],
+  "hypothesis": "",
+  "route_evidence": [
+    "DESC-OVERLAP"
+  ]
+}

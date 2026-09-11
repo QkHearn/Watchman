@@ -1,0 +1,21 @@
+{
+  "id": "P-20260910-003",
+  "created_at": "2026-09-10T11:57:00.809Z",
+  "updated_at": "2026-09-10T11:57:00.809Z",
+  "title": "未填写现象",
+  "text": "",
+  "apis": [],
+  "errors": [],
+  "snippet": "",
+  "logs": "",
+  "module_id": "pip",
+  "module_name": "画中画",
+  "status": "routed",
+  "confidence": "",
+  "scenario_id": "",
+  "scenario_title": "",
+  "exception_layer": "",
+  "exception_functions": [],
+  "hypothesis": "",
+  "route_evidence": []
+}

@@ -1,0 +1,21 @@
+{
+  "id": "P-20260911-003",
+  "created_at": "2026-09-11T06:19:50.742Z",
+  "updated_at": "2026-09-11T06:19:50.742Z",
+  "title": "悬浮窗没有正常启动",
+  "text": "悬浮窗没有正常启动",
+  "apis": [],
+  "errors": [],
+  "snippet": "",
+  "logs": "",
+  "module_id": "",
+  "module_name": "unknown",
+  "status": "routed",
+  "confidence": "low",
+  "scenario_id": "",
+  "scenario_title": "",
+  "exception_layer": "",
+  "exception_functions": [],
+  "hypothesis": "",
+  "route_evidence": []
+}

@@ -1,0 +1,86 @@
+# Watchman 模块插件 YAML 2.2
+# 八类关键信息（别人给这一份即可适配）：
+#   1. log_whitelist     日志白名单：命中 = 当前这份 YAML 的模块问题
+#   2. log_blacklist     日志黑名单：命中 = 其他模块问题，必须填 to_module（对方 module_id）；对方未接入则为「非窗口问题：名称」
+#   3. apis.internal     对内接口：给引擎/AI 对照调用链与日志，不进前端多选
+#   4. apis.external     故障接口（对外）：前端按预分流模块下拉多选
+#   5. apis.dependencies 外部依赖接口：本模块调用的其他模块接口，仅辅助定位
+#   6. scenarios         本模块常见场景
+#   7. scenarios.callchain / key_logs  该场景对应的调用链与关键日志
+#   8. collect           只给用户一条正则，复制到 BetaClub 搜集日志
+# 复制本目录为 modules/<id>/，改 module_id 与 enabled: true。
+
+schema_version: "2.2.0"
+module_id: replace_me
+enabled: false
+
+meta:
+  name: （中文模块名）
+  name_en: ModuleName
+  subsystem: （子系统）
+  field_id: RF-REPLACE
+  field_name: （责任田显示名）
+  description: |
+    做什么。
+    不做什么（避免和相邻模块抢分流）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: ""
+
+# 1. 日志白名单
+log_whitelist:
+  - id: WL-TAG
+    regex: '\bREPLACE_TAG\b'
+    flags: i
+    meaning: 本模块主 tag，命中即可确认归本模块
+
+# 2. 日志黑名单（命中则分流到 to_module 对应模块；该 id 尚未接入则为「非窗口问题：名称」）
+log_blacklist:
+  - id: BL-OTHER
+    regex: '\bOTHER_MODULE_TAG\b'
+    flags: i
+    to_module: other_module_id
+    to_module_name: （对方模块中文名）
+    reason: "命中则归对方模块"
+    unless_whitelist: true
+
+# 3 / 4 / 5. 接口（仅 external 出现在前端勾选；internal / dependencies 给引擎对照调用链）
+apis:
+  external:
+    - { id: ReplaceMe.create, label: ReplaceMe.create, role: "创建" }
+  internal:
+    - { id: ReplaceMeController, label: ReplaceMeController, role: "框架实现，仅定位" }
+  dependencies:
+    - { id: OtherModule.foo, label: OtherModule.foo, module: other, role: "外部依赖，仅定位" }
+
+# 8. 给用户的唯一搜集正则（复制到 BetaClub，不要多条）
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志
+  where: BetaClub
+  hint: 只需这一条。搜集后把命中行完整粘贴到阶段二
+  regex: '\bREPLACE_TAG\b'
+
+# 6 + 7. 场景 = 一张「路径图」+ 若干「探针」
+# 调用链：本场景真实经过的层，自上而下；有且仅有一层 exception: true（断开层）
+# 关键日志：探针，不是第二份调用链。每条必须带 layer_id/function，对应调用链上的那一层；
+#          exception: true 的日志用来钉死异常点；meaning 写「命中=断在哪」
+scenarios:
+  - id: SC-FAIL
+    title: （场景中文名）
+    boundary: FRAMEWORK
+    priority: 10
+    summary: "命中 LOG-FAIL → 断在 L-CPP ReplaceMeController"
+    callchain:
+      - { layer_id: L-JS, name: 应用调用, do: 调用对外接口, symbols: [ReplaceMe.create] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsReplaceMe] }
+      - { layer_id: L-CPP, name: 框架实现, locate: 命中 failed 日志即停在本层, symbols: [ReplaceMeController], exception: true }
+    key_logs:
+      - id: LOG-FAIL
+        meaning: 框架实现失败，断在 ReplaceMeController
+        regex: 'ReplaceMe\s+failed'
+        flags: i
+        layer_id: L-CPP
+        function: ReplaceMeController
+        severity: error
+        exception: true

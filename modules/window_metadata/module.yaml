@@ -1,0 +1,201 @@
+# Watchman 窗口元数据配置 YAML 2.3
+# 指南模块名：窗口元数据配置
+# 对外接口分册：apis/窗口元数据配置.md
+# 四仓：
+#   配置 → module.json5 metadata（ohos.ability.window.*）
+#   运行时 → setSupportedWindowModes / setWindowRectAutoSave（WMSLayoutPc）
+# 核实日志：元数据解析主 tag 为 WMSLayoutPc；enable.remove.starting.window 属启动页（WMSStartupPage）。
+# DTS：@ohos.window.d.ts
+# NAPI：window_runtime（window / WindowStage）
+# 主诉是元数据/模式协议；success 默认 L-WM-CLIENT。
+schema_version: "2.3.0"
+module_id: window_metadata
+enabled: true
+meta:
+  name: 窗口元数据配置
+  name_en: WindowMetadata
+  subsystem: Window
+  field_id: RF-WMS-META
+  field_name: WMS-LayoutPc
+  description: |
+    【做什么】在 metadata 配置主窗默认尺寸位置、最大化启动、自由窗支持模式、直角等；
+    运行时 setSupportedWindowModes / setWindowRectAutoSave 可覆盖。
+    主责日志 tag 核实为 WMSLayoutPc（非独立 Metadata tag）。
+    【典型现象】默认尺寸不对、支持模式未生效、自动记忆失败、参数非法。
+    【不要分流】启动页 remove/资源 → 应用启动页；窗口模式切换手势 → 窗口模式；
+    自由窗装饰 → 自由窗口；纯 move/resize → 窗口布局。
+    【怎么定位】success 卡在 L-WM-CLIENT（set window support modes succeed / enable 日志）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/window_metadata
+log_blacklist:
+  - id: BL-STARTUP
+    regex: '(?:WMSStartupPage|removeStartingWindow|enable\.remove\.starting\.window|startWindowIcon)'
+    flags: i
+    to_module: launch_page
+    to_module_name: 应用启动页
+    reason: 启动页配置/移除另册
+  - id: BL-MODE
+    regex: '(?:WMSMultiWindow|splitPrimary|floatingWindowMode)'
+    flags: i
+    to_module: window_mode
+    to_module_name: 窗口模式
+    reason: 运行时模式切换，不是 metadata 默认配置
+  - id: BL-LAYOUT
+    regex: '(?:WMSLayout\b|moveWindowTo|setWindowLimits)'
+    flags: i
+    to_module: window_layout
+    to_module_name: 窗口布局
+    reason: 运行时布局操作
+  - id: BL-FREEFORM
+    regex: '(?:WMSDecor|FreeMultiWindow|setWindowDecorVisible)'
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: 自由窗装饰/多窗
+apis:
+  external:
+    - { id: metadata.ohos.ability.window.height, role: 主窗默认高度（vp） }
+    - { id: metadata.ohos.ability.window.width, role: 主窗默认宽度（vp） }
+    - { id: metadata.ohos.ability.window.left, role: 主窗默认 left }
+    - { id: metadata.ohos.ability.window.top, role: 主窗默认 top }
+    - { id: metadata.ohos.ability.window.isMaximize, role: 是否最大化启动 }
+    - { id: metadata.ohos.ability.window.supportWindowModeInFreeMultiWindow, role: 自由窗下支持模式 }
+    - { id: metadata.ohos.ability.window.isRightAngle, role: 主窗直角（PC/2in1 系统应用） }
+    - { id: WindowStage.setSupportedWindowModes, role: 运行时窗口模式（优先于 metadata） }
+    - { id: WindowStage.setWindowRectAutoSave, role: 窗口尺寸记忆 }
+  internal:
+    - { id: JsSceneSession.parseAbilityWindowMetadata, role: 解析 ohos.ability.window.* }
+    - { id: JsWindowStage.SetSupportedWindowModes, role: NAPI 设置支持模式 }
+    - { id: JsWindowStage.SetWindowRectAutoSave, role: NAPI 尺寸记忆 }
+  dependencies:
+    - { id: StartOptions, module: "", role: AbilityKit 亦可指定大小位置与模式 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSLayoutPc|ohos\.ability\.window\.(?:width|height|left|top|isMaximize|isRightAngle)|setSupportedWindowModes|setWindowRectAutoSave|set window support modes succeed|set window support modes failed|isSaveBySpecifiedFlag|Failed to convert supportedWindowModes|The number of parameters is invalid|Window recover position failed)
+atoms:
+  - id: parse_window_metadata
+    title: 解析主窗元数据
+    api: metadata.ohos.ability.window.width
+    callchain:
+      - { layer_id: L-JS, name: module.json5 metadata 配置, symbols: [metadata.ohos.ability.window.width, metadata.ohos.ability.window.height] }
+      - { layer_id: L-WM-CLIENT, name: 解析 metadata（协议终点）, symbols: [JsSceneSession] }
+    enter:
+      - id: IN-META-W
+        meaning: 已读到 width 元数据
+        regex: 'ohos\.ability\.window\.width='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsSceneSession
+    success:
+      - id: OK-META-H
+        meaning: 已读到 height 等元数据（同路径）
+        regex: 'ohos\.ability\.window\.height='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsSceneSession
+    failures:
+      - id: FAIL-META-NULL
+        title: abilityInfo 为空
+        kind: 依赖失败
+        when: abilityInfo is nullptr
+        meaning: 断在解析
+        regex: 'abilityInfo is nullptr'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsSceneSession
+
+  - id: set_supported_modes
+    title: 设置支持的窗口模式
+    api: WindowStage.setSupportedWindowModes
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setSupportedWindowModes, symbols: [WindowStage.setSupportedWindowModes] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindowStage.SetSupportedWindowModes] }
+      - { layer_id: L-WM-CLIENT, name: 写支持模式（协议终点）, symbols: [Window.SetSupportedWindowModes] }
+    enter:
+      - id: IN-MODES
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[setSupportedWindowModes\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.SetSupportedWindowModes
+    success:
+      - id: OK-MODES
+        meaning: 支持模式设置成功
+        regex: 'set window support modes succeed'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindowStage.OnSetSupportedWindowModes
+    failures:
+      - id: FAIL-MODES-ARGC
+        title: 参数个数非法
+        kind: 应用误用
+        when: argc 不对
+        meaning: 断在 NAPI
+        regex: 'The number of parameters is invalid'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.SetSupportedWindowModes
+      - id: FAIL-MODES-CONV
+        title: 模式参数转换失败
+        kind: 应用误用
+        when: 无法转换 supportedWindowModes
+        meaning: 断在 NAPI
+        regex: 'Failed to convert supportedWindowModes parameter'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.SetSupportedWindowModes
+      - id: FAIL-MODES-SET
+        title: 设置支持模式失败
+        kind: 框架缺陷
+        when: SetSupportedWindowModes 非 OK
+        meaning: 断在 WM
+        regex: 'set window support modes failed'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindowStage.OnSetSupportedWindowModes
+
+  - id: set_rect_autosave
+    title: 窗口尺寸记忆
+    api: WindowStage.setWindowRectAutoSave
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowRectAutoSave, symbols: [WindowStage.setWindowRectAutoSave] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindowStage.SetWindowRectAutoSave] }
+      - { layer_id: L-WM-CLIENT, name: 写自动保存（协议终点）, symbols: [Window.SetWindowRectAutoSave] }
+    enter:
+      - id: IN-AUTOSAVE
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[setWindowRectAutoSave\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.SetWindowRectAutoSave
+    success:
+      - id: OK-AUTOSAVE
+        meaning: 自动保存已设置（带 enable）
+        regex: 'isSaveBySpecifiedFlag:.*enable:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindowStage.OnSetWindowRectAutoSave
+    failures:
+      - id: FAIL-AUTOSAVE-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: 参数个数或类型不对
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowRectAutoSave\]msg: (?:Incorrect number of parameters|Failed to convert parameter to enabled)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.SetWindowRectAutoSave
+      - id: FAIL-AUTOSAVE-RET
+        title: 位置恢复/记忆失败
+        kind: 框架缺陷
+        when: SetWindowRectAutoSave 失败
+        meaning: 断在 NAPI
+        regex: 'Window recover position failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.SetWindowRectAutoSave

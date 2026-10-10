@@ -1,0 +1,272 @@
+# Watchman 窗口生命周期 YAML 2.3
+# 指南模块名：窗口生命周期
+# 对外接口分册：apis/窗口生命周期.md
+# 四仓：
+#   应用 API → @ohos.window（WindowStage / Window）
+#   协议落地 → window_window_manager（WMSLife）
+#   SceneBoard：无独立生命周期 Panel；success 卡 L-WM-CLIENT
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/window_runtime
+schema_version: "2.3.0"
+module_id: window_lifecycle
+enabled: true
+meta:
+  name: 窗口生命周期
+  name_en: WindowLifecycle
+  subsystem: Window
+  field_id: RF-WMS-LIFE
+  field_name: WMS-Life
+  description: |
+    【做什么】主窗口生命周期由 UIAbility / WindowStage 驱动；辅助窗口由应用管理创建、销毁、显示、隐藏。
+    应用走 @ohos.window（loadContent / showWindow / destroyWindow / windowStageEvent 等）。
+    主责在 window_manager（WMSLife）；SceneBoard 无独立生命周期控件。
+    【典型现象】loadContent 失败、窗显示不出来、销毁异常、前后台回调缺失。
+    【不要分流】子窗口创建细节 → 子窗口；画中画启停 → 画中画；焦点竞争 → 窗口焦点；
+    move/resize → 窗口布局。
+    【怎么定位】success 卡在 L-WM-CLIENT（协议落地）。显示控件类问题改分流邻居。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/window_lifecycle
+log_blacklist:
+  - id: BL-FOCUS
+    regex: '(?:\bWMSFocus\b|setWindowFocusable|shiftAppWindowFocus)'
+    flags: i
+    to_module: window_focus
+    to_module_name: 窗口焦点
+    reason: 更像焦点
+  - id: BL-LAYOUT
+    regex: '(?:\bWMSLayout\b|moveWindowTo|setWindowLimits)'
+    flags: i
+    to_module: window_layout
+    to_module_name: 窗口布局
+    reason: 改尺寸位置，不是生命周期
+  - id: BL-PIP
+    regex: '(?:WMS_PIP|SCBPiPManager)'
+    flags: i
+    to_module: pip
+    to_module_name: 画中画
+    reason: 更像画中画
+  - id: BL-SUBWINDOW
+    regex: '(?:createSubWindowWithOptions|createSubWindow)'
+    flags: i
+    to_module: subwindow
+    to_module_name: 子窗口
+    reason: 子窗创建另册
+  - id: BL-IMMS
+    regex: '\bWMSImms\b'
+    flags: i
+    to_module: immersive
+    to_module_name: 窗口沉浸式
+    reason: 更像沉浸式
+apis:
+  external:
+    - { id: WindowStage.on, label: "WindowStage.on('windowStageLifecycleEvent')", role: 监听 WindowStage 生命周期（API20+） }
+    - { id: WindowStage.on, label: "WindowStage.on('windowStageEvent')", role: 监听 WindowStage 生命周期（API20 前） }
+    - { id: WindowStage.loadContent, role: 加载页面内容 }
+    - { id: WindowStage.createSubWindow, role: 创建子窗口 }
+    - { id: Window.showWindow, role: 显示窗口 }
+    - { id: Window.minimize, role: 最小化 }
+    - { id: Window.destroyWindow, role: 销毁窗口 }
+    - { id: Window.isWindowShowing, role: 是否已显示 }
+    - { id: Window.on, label: "Window.on('windowEvent')", role: 窗口创建/显示/隐藏/销毁/焦得失 }
+  internal:
+    - { id: JsWindowStage.LoadContent, role: NAPI loadContent }
+    - { id: JsWindow.ShowWindow, role: NAPI showWindow }
+    - { id: JsWindow.DestroyWindow, role: NAPI destroyWindow }
+    - { id: WindowSessionImpl.SetUIContentInner, role: WM 加载 UIContent }
+    - { id: WindowSceneSessionImpl.Show, role: WM 显示 }
+    - { id: WindowSessionImpl.Destroy, role: WM 销毁 }
+    - { id: WindowSessionImpl.Connect, role: WM Connect 会话 }
+  dependencies:
+    - { id: UIAbility / WindowStage, module: main_window, role: 主窗 Stage 驱动前后台 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSLife|\[window\]\[loadContent\]|\[window\]\[showWindow\]|\[window\]\[destroyWindow\]|Window show success|Window show failed|Window Connect|Init UIContent fail|window is invalid! window state|connect failed|Clear success|Release uicontent successfully|get attach state sync result|window attach state timeout)
+atoms:
+  - id: load_content
+    title: 加载内容
+    api: WindowStage.loadContent
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 loadContent, symbols: [WindowStage.loadContent, Window.loadContent] }
+      - { layer_id: L-NAPI, name: NAPI 校验与转发, symbols: [JsWindowStage.LoadContent, JsWindow.LoadContent] }
+      - { layer_id: L-WM-CLIENT, name: 初始化 UIContent（协议终点）, symbols: [WindowSessionImpl.SetUIContentInner, WindowSessionImpl.InitUIContent] }
+    enter:
+      - id: IN-LOAD
+        meaning: NAPI 已进入 loadContent
+        regex: '\[window\]\[loadContent\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.LoadContent
+      - id: IN-LOAD-WM
+        meaning: WM 已进入 SetUIContentInner
+        regex: 'state:\d+, persistentId:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetUIContentInner
+    success:
+      - id: OK-LOAD
+        meaning: InitUIContent 路径完成（未走 Init UIContent fail）
+        regex: 'Restore router stack succeed'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.InitUIContent
+    failures:
+      - id: FAIL-LOAD-NAPI
+        title: loadContent 失败
+        kind: 应用误用
+        when: 窗未创建、参数或加载失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[loadContent\]msg:'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.LoadContent
+      - id: FAIL-LOAD-INVALID
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 WM
+        regex: 'window is invalid! window state:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetUIContentInner
+      - id: FAIL-LOAD-INIT
+        title: Init UIContent 失败
+        kind: 框架缺陷
+        when: InitUIContent 返回非 OK
+        meaning: 断在 WM
+        regex: 'Init UIContent fail'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetUIContentInner
+
+  - id: show_window
+    title: 显示窗口
+    api: Window.showWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 showWindow, symbols: [Window.showWindow] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow.ShowWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Show（协议终点）, symbols: [WindowSceneSessionImpl.Show] }
+    enter:
+      - id: IN-SHOW
+        meaning: NAPI/错误路径可见 showWindow
+        regex: '\[window\]\[showWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.ShowWindow
+      - id: IN-SHOW-WM
+        meaning: WM 已进入 Window show
+        regex: 'Window show \[name:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.Show
+    success:
+      - id: OK-SHOW
+        meaning: WM Show 成功
+        regex: 'Window show success'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.Show
+      - id: OK-SHOW-ALREADY
+        meaning: 已显示（幂等成功）
+        regex: 'window is already shown'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.Show
+    failures:
+      - id: FAIL-SHOW-NAPI
+        title: showWindow 失败
+        kind: 应用误用
+        when: 参数/窗状态异常
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWindow\]msg:'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.ShowWindow
+      - id: FAIL-SHOW-WM
+        title: WM 显示失败
+        kind: 框架缺陷
+        when: Show 返回失败
+        meaning: 断在 WM
+        regex: 'Window show failed'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.Show
+
+  - id: destroy_window
+    title: 销毁窗口
+    api: Window.destroyWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 destroyWindow, symbols: [Window.destroyWindow] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow.DestroyWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Destroy（协议终点）, symbols: [WindowSessionImpl.Destroy] }
+    enter:
+      - id: IN-DESTROY
+        meaning: NAPI 进入 destroyWindow
+        regex: '\[window\]\[destroyWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.DestroyWindow
+      - id: IN-DESTROY-WM
+        meaning: WM 已进入 Destroy
+        regex: 'Destroy, state:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.Destroy
+    success:
+      - id: OK-DESTROY
+        meaning: 监听清理完成
+        regex: 'Clear success, id:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl
+      - id: OK-DESTROY-UI
+        meaning: UIContent 已释放
+        regex: 'Release uicontent successfully'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl
+    failures:
+      - id: FAIL-DESTROY-NAPI
+        title: destroyWindow 失败
+        kind: 应用误用
+        when: 窗未创建或销毁失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[destroyWindow\]msg:'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.DestroyWindow
+
+  - id: window_connect
+    title: 窗口 Connect
+    api: Window.showWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用侧触发建连/显示, symbols: [Window.showWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Connect 会话（协议终点）, symbols: [WindowSessionImpl.Connect] }
+    enter:
+      - id: IN-CONNECT
+        meaning: WM 输出 Window Connect
+        regex: 'Window Connect \[name:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.Connect
+    success:
+      - id: OK-CONNECT
+        meaning: surfaceNode 初始化完成
+        regex: 'post init surfaceNode success'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.PostInitSurfaceNode
+    failures:
+      - id: FAIL-CONNECT
+        title: Connect 失败
+        kind: 框架缺陷
+        when: surfaceNode / renderSession 为空
+        meaning: 断在 WM
+        regex: 'connect failed'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.Connect

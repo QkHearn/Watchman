@@ -1,0 +1,6 @@
+# 分流命令。提示词会接在命令最后。
+# 默认用 test。WATCHMAN_ENV=production 时用 production。
+# 环境变量 WATCHMAN_RUN 若写了整条命令，优先于本文件。
+
+test: "cursor-agent -p --mode ask --trust --output-format text"
+production: "nga run"

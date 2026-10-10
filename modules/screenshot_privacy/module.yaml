@@ -1,0 +1,254 @@
+# Watchman 截图与隐私模式 YAML 2.3
+# 指南模块名：截图与隐私模式
+# 对外接口分册：apis/截图与隐私模式.md
+# 四仓：
+#   应用 API → @ohos.screenshot + @ohos.window（隐私）
+#   实现 → napi/screenshot（DMS）+ window_runtime 隐私（WMSAttribute / 默认域）
+# DTS：@ohos.screenshot.d.ts、@ohos.window.d.ts
+# NAPI：screenshot；window_runtime
+# 主诉：隐私协议成功卡 L-WM-CLIENT；截图 API 成功卡 L-NAPI（DMS）。
+schema_version: "2.3.0"
+module_id: screenshot_privacy
+enabled: true
+meta:
+  name: 截图与隐私模式
+  name_en: ScreenshotPrivacy
+  subsystem: Window
+  field_id: RF-WMS-PRIV
+  field_name: WMS-ScreenshotPrivacy
+  description: |
+    【做什么】窗口隐私模式（防截录投）；区域/全屏截屏；隐私窗有效截图；截屏事件监听。
+    screenshot.* 走 display/screenshot NAPI（DMS tag）；setWindowPrivacyMode 走 window_runtime。
+    【典型现象】隐私未生效、缺 PRIVACY_WINDOW 权限、截屏黑屏/失败、参数非法。
+    【不要分流】屏幕属性查询 → 屏幕属性；虚拟屏 → 虚拟屏；沉浸式系统栏 → 窗口沉浸式。
+    【怎么定位】隐私 success 卡 L-WM-CLIENT；screenshot.pick/capture success 卡 L-NAPI（DMS）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/screenshot_privacy
+log_blacklist:
+  - id: BL-DISPLAY
+    regex: '(?:getDefaultDisplaySync|getAllDisplays|foldStatusChange|availableAreaChange)'
+    flags: i
+    to_module: display
+    to_module_name: 屏幕属性
+    reason: 屏幕属性查询/监听，不是截图隐私
+  - id: BL-VS
+    regex: '(?:CreateVirtualScreen|destroyVirtualScreen|OnCreateVirtualScreen)'
+    flags: i
+    to_module: virtual_screen
+    to_module_name: 虚拟屏
+    reason: 虚拟屏管理
+  - id: BL-IMMS
+    regex: '(?:WMSImms|setWindowLayoutFullScreen)'
+    flags: i
+    to_module: immersive
+    to_module_name: 窗口沉浸式
+    reason: 沉浸式布局
+  - id: BL-BRIGHT
+    regex: '(?:setWindowBrightness|setWindowKeepScreenOn)'
+    flags: i
+    to_module: brightness
+    to_module_name: 控制亮度与常亮
+    reason: 亮度常亮另册
+apis:
+  external:
+    - { id: Window.setWindowPrivacyMode, role: 设置/取消隐私模式 }
+    - { id: Window.snapshotIgnorePrivacy, role: 对隐私窗口有效截图 }
+    - { id: screenshot.pick, role: 区域截屏（主屏） }
+    - { id: screenshot.capture, role: 全屏截屏（可指定 displayId） }
+    - { id: "Window.on('screenshot')", role: 监听截屏动作 }
+    - { id: "Window.on('screenshotAppEvent')", role: 监听截屏事件类型 }
+  internal:
+    - { id: JsWindow.SetWindowPrivacyMode, role: NAPI 隐私模式 }
+    - { id: JsWindow.SnapshotIgnorePrivacy, role: NAPI 忽略隐私截图 }
+    - { id: WindowSceneSessionImpl.SetPrivacyMode, role: WM 写隐私属性 }
+    - { id: native_screenshot_module, role: screenshot NAPI pick/capture }
+  dependencies:
+    - { id: DisplayManager, module: display, role: 截屏依赖显示设备 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:setWindowPrivacyMode|snapshotIgnorePrivacy|PRIVACY_WINDOW|succeed, window|Get Screenshot|screen shot ret=|pick end|\[screenshot\]\[(?:pick|capture)\]|Screenshot image|snapshot end|Failed to TakeSurfaceCapture|Invalid Input Param|ScreenCapture failed)
+atoms:
+  - id: set_privacy_mode
+    title: 设置隐私模式
+    api: Window.setWindowPrivacyMode
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowPrivacyMode, symbols: [Window.setWindowPrivacyMode] }
+      - { layer_id: L-NAPI, name: NAPI 校验与权限, symbols: [JsWindow.SetWindowPrivacyMode] }
+      - { layer_id: L-WM-CLIENT, name: 写隐私属性（协议终点）, symbols: [WindowSceneSessionImpl.SetPrivacyMode] }
+    enter:
+      - id: IN-PRIVACY
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[setWindowPrivacyMode\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowPrivacyMode
+    success:
+      - id: OK-PRIVACY
+        meaning: 隐私模式设置成功
+        regex: 'succeed, window'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindow.OnSetWindowPrivacyMode
+    failures:
+      - id: FAIL-PRIVACY-PERM
+        title: 缺少隐私窗权限
+        kind: 应用误用
+        when: 无 ohos.permission.PRIVACY_WINDOW
+        meaning: 断在 NAPI
+        regex: 'Need ohos\.permission\.PRIVACY_WINDOW permission'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowPrivacyMode
+      - id: FAIL-PRIVACY-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: 缺参或类型不对
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowPrivacyMode\]msg: (?:Mandatory parameters are left unspecified|Incorrect parameter types)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowPrivacyMode
+      - id: FAIL-PRIVACY-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowPrivacyMode\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowPrivacyMode
+
+  - id: snapshot_ignore_privacy
+    title: 忽略隐私截窗
+    api: Window.snapshotIgnorePrivacy
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 snapshotIgnorePrivacy, symbols: [Window.snapshotIgnorePrivacy] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow.SnapshotIgnorePrivacy] }
+      - { layer_id: L-WM-CLIENT, name: 取像素图（协议终点）, symbols: [WindowSessionImpl] }
+    enter:
+      - id: IN-SNAP-IGN
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[snapshotIgnorePrivacy\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    success:
+      - id: OK-SNAP-IGN
+        meaning: snapshot 结束（带 WxH）
+        regex: 'windowId:\d+, WxH='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindow
+    failures:
+      - id: FAIL-SNAP-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[snapshotIgnorePrivacy\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+      - id: FAIL-SNAP-DEV
+        title: 设备不支持
+        kind: 依赖失败
+        when: device not support
+        meaning: 断在 NAPI
+        regex: 'device not support'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+      - id: FAIL-SNAP-PIXEL
+        title: 创建 pixelMap 失败
+        kind: 框架缺陷
+        when: 取图失败
+        meaning: 断在 NAPI
+        regex: 'Create pixelMap failed|get pixelmap failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+
+  - id: screenshot_pick
+    title: 区域截屏
+    api: screenshot.pick
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 screenshot.pick, symbols: [screenshot.pick] }
+      - { layer_id: L-NAPI, name: screenshot NAPI（DMS）, symbols: [native_screenshot_module] }
+    enter:
+      - id: IN-PICK
+        meaning: 进入 pick 路径
+        regex: 'Get Screenshot by picker|\[screenshot\]\[pick\]'
+        flags: i
+        layer_id: L-NAPI
+        function: native_screenshot_module
+    success:
+      - id: OK-PICK
+        meaning: pick 结束
+        regex: 'pick end'
+        flags: i
+        layer_id: L-NAPI
+        function: native_screenshot_module
+    failures:
+      - id: FAIL-PICK-PARAM
+        title: 输入参数非法
+        kind: 应用误用
+        when: Invalid Input Param
+        meaning: 断在 NAPI
+        regex: '\[screenshot\]\[pick\]msg: Get Screenshot Failed: Invalid input param'
+        flags: i
+        layer_id: L-NAPI
+        function: native_screenshot_module
+      - id: FAIL-PICK-NULL
+        title: 截图像素为空
+        kind: 框架缺陷
+        when: image is nullptr
+        meaning: 断在 NAPI
+        regex: 'Screenshot image is nullptr'
+        flags: i
+        layer_id: L-NAPI
+        function: native_screenshot_module
+
+  - id: screenshot_capture
+    title: 全屏截屏
+    api: screenshot.capture
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 screenshot.capture, symbols: [screenshot.capture] }
+      - { layer_id: L-NAPI, name: screenshot NAPI（DMS）, symbols: [native_screenshot_module] }
+    enter:
+      - id: IN-CAPTURE
+        meaning: 进入 capture 路径
+        regex: '\[screenshot\]\[capture\]|capture option isNeedNotify'
+        flags: i
+        layer_id: L-NAPI
+        function: native_screenshot_module
+    success:
+      - id: OK-CAPTURE
+        meaning: 截屏返回（带 ret）
+        regex: 'screen shot ret='
+        flags: i
+        layer_id: L-NAPI
+        function: native_screenshot_module
+    failures:
+      - id: FAIL-CAPTURE-PARAM
+        title: 参数错误
+        kind: 应用误用
+        when: Parameter error
+        meaning: 断在 NAPI
+        regex: '\[screenshot\]\[capture\]msg: Parameter error'
+        flags: i
+        layer_id: L-NAPI
+        function: native_screenshot_module
+      - id: FAIL-CAPTURE-NULL
+        title: 截图像素为空
+        kind: 框架缺陷
+        when: image is null
+        meaning: 断在 NAPI
+        regex: 'ScreenCapture failed: image is null'
+        flags: i
+        layer_id: L-NAPI
+        function: native_screenshot_module

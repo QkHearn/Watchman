@@ -1,0 +1,6 @@
+# 源码仓路径。改这一份即可。
+# 相对路径相对于本文件所在目录（Watchman/config）。
+# 环境变量优先：WATCHMAN_WINDOW_MANAGER、WATCHMAN_SCENE_BOARD_EXT
+
+window_window_manager: "../../window_window_manager"
+scene_board_ext: ""

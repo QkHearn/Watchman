@@ -1,0 +1,285 @@
+# Watchman 子窗口 YAML 2.3
+# 指南模块名：子窗口
+# 对外接口分册：apis/子窗口.md
+# 四仓：
+#   应用 API → @ohos.window（WindowStage.createSubWindow / createSubWindowWithOptions）
+#   协议落地 → window_window_manager（WMSSub；部分路径仍打 WMSLife）
+#   SceneBoard：无独立子窗 Panel；success 默认 L-WM-CLIENT / L-NAPI
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/window_runtime
+schema_version: "2.3.0"
+module_id: subwindow
+enabled: true
+meta:
+  name: 子窗口
+  name_en: SubWindow
+  subsystem: Window
+  field_id: RF-WMS-SUB
+  field_name: WMS-Sub
+  description: |
+    【做什么】Stage 模型下应用自行创建/销毁的辅助窗口；createSubWindowWithOptions 且
+    zLevelAboveParentLoosened=true 可得独立子窗。WM 主 tag：WMSSub。
+    【典型现象】创建失败、设备不支持独立子窗、权限不足、show/destroy 异常、父子关系错误。
+    【不要分流】主窗口 getMainWindow/loadContent；模态 TYPE_DIALOG；全局悬浮 TYPE_FLOAT；
+    闪控窗/闪控球；画中画。
+    【怎么定位】success 以「Create sub window … end」/ show end 为协议终点（L-NAPI）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/subwindow
+log_blacklist:
+  - id: BL-MAIN
+    regex: '(?:Get main window|Please create mainWindow First|Find MainWinId)'
+    flags: i
+    to_module: main_window
+    to_module_name: 主窗口
+    reason: 更像主窗口
+  - id: BL-MODAL
+    regex: '(?:TYPE_DIALOG|WMSDialog|set dialog window|BindDialogTarget)'
+    flags: i
+    to_module: modal_window
+    to_module_name: 模态窗口
+    reason: 更像模态窗口
+  - id: BL-GLOBAL-FLOAT
+    regex: '(?:TYPE_FLOAT CheckCallingPermission|SYSTEM_FLOAT_WINDOW)'
+    flags: i
+    to_module: global_floating_window
+    to_module_name: 全局悬浮窗
+    reason: 更像全局悬浮窗
+  - id: BL-FLOAT-VIEW
+    regex: '(?:OnStartFloatView|JsFloatViewManager|Create fv window)'
+    flags: i
+    to_module: float_view
+    to_module_name: 闪控窗
+    reason: 更像闪控窗
+  - id: BL-FLOATING-BALL
+    regex: '(?:OnStartFloatingBall|FloatingBallController|SCBFloatingBall)'
+    flags: i
+    to_module: floating_ball
+    to_module_name: 闪控球
+    reason: 更像闪控球
+  - id: BL-PIP
+    regex: '(?:WMSPiP|OnStartPictureInPicture|SCBPiPManager)'
+    flags: i
+    to_module: pip
+    to_module_name: 画中画
+    reason: 更像画中画
+apis:
+  external:
+    - { id: WindowStage.createSubWindow, role: 创建子窗口 }
+    - { id: WindowStage.createSubWindowWithOptions, role: 带选项创建子窗口/独立子窗 }
+    - { id: Window.setUIContent, role: 加载子窗口页面 }
+    - { id: Window.showWindow, role: 显示子窗口 }
+    - { id: Window.destroyWindow, role: 销毁子窗口 }
+  internal:
+    - { id: JsWindowStage.OnCreateSubWindow, role: NAPI 创建子窗 }
+    - { id: JsWindowStage.OnCreateSubWindowWithOptions, role: NAPI 带选项创建 }
+    - { id: JsWindow.OnCreateSubWindowWithOptions, role: Window 侧带选项创建 }
+    - { id: WindowScene.CreateWindow, role: WM 真正创建 }
+    - { id: JsWindow.OnShowWindow, role: NAPI 显示 }
+    - { id: JsWindow.OnDestroyWindow, role: NAPI 销毁 }
+  dependencies:
+    - { id: WindowStage.getMainWindow, module: main_window, role: 依赖主窗已存在 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSSub|createSubWindowWithOptions|createSubWindow|Create sub window|Normal subwindow not support|zLevelAboveParentLoosened|Modal subwindow has topmost|Device not support|Insufficient system permissions|Failed to create window|parent window type invalid|device not support|show end|Window show failed|Window destroy failed|\[window\]\[(?:createSubWindow|createSubWindowWithOptions|showWindow|destroyWindow)\])
+atoms:
+  - id: create_subwindow
+    title: 创建子窗口
+    api: WindowStage.createSubWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 createSubWindow, symbols: [WindowStage.createSubWindow] }
+      - { layer_id: L-NAPI, name: NAPI 校验并创建, symbols: [JsWindowStage.OnCreateSubWindow] }
+      - { layer_id: L-WM-CLIENT, name: CreateWindow, symbols: [WindowScene.CreateWindow] }
+    enter:
+      - id: IN-CREATE-SUB
+        meaning: 已进入 createSubWindow（失败时可见）
+        regex: '\[window\]\[createSubWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnCreateSubWindow
+    success:
+      - id: OK-CREATE-SUB
+        meaning: 子窗口创建完成
+        regex: 'Create sub window .+ end'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnCreateSubWindow
+    failures:
+      - id: FAIL-SUB-NAME
+        title: 窗口名参数非法
+        kind: 应用误用
+        when: windowName 转换失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createSubWindow\]msg: Failed to convert parameter to windowName'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnCreateSubWindow
+      - id: FAIL-SUB-MAIN
+        title: 主窗无效
+        kind: 应用误用
+        when: WindowScene 为空
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createSubWindow\]msg: The main window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnCreateSubWindow
+      - id: FAIL-SUB-CREATE
+        title: 创建子窗失败
+        kind: 框架缺陷
+        when: CreateWindow 返回空
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createSubWindow\]msg: Failed to create window'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnCreateSubWindow
+
+  - id: create_subwindow_options
+    title: 带选项创建子窗口
+    api: WindowStage.createSubWindowWithOptions
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 createSubWindowWithOptions, symbols: [WindowStage.createSubWindowWithOptions] }
+      - { layer_id: L-NAPI, name: NAPI 校验设备/权限/选项, symbols: [JsWindowStage.OnCreateSubWindowWithOptions] }
+      - { layer_id: L-WM-CLIENT, name: CreateWindow, symbols: [WindowScene.CreateWindow] }
+    enter:
+      - id: IN-CREATE-OPT
+        meaning: 已进入带选项创建（失败时可见）
+        regex: '\[window\]\[createSubWindowWithOptions\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnCreateSubWindowWithOptions
+      - id: IN-ZLEVEL
+        meaning: 已解析独立子窗相关选项
+        regex: 'zLevelAboveParentLoosened:'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowUtils
+    success:
+      - id: OK-CREATE-OPT
+        meaning: 带选项子窗创建完成
+        regex: 'Create sub window .+ end'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnCreateSubWindowWithOptions
+    failures:
+      - id: FAIL-OPT-DEVICE
+        title: 设备不支持
+        kind: 应用误用
+        when: 非 PC/Pad 自由多窗等
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createSubWindowWithOptions\]msg: Device not support'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnCreateSubWindowWithOptions
+      - id: FAIL-OPT-PERM
+        title: 系统权限不足
+        kind: 应用误用
+        when: 权限校验失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createSubWindowWithOptions\]msg: Insufficient system permissions'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnCreateSubWindowWithOptions
+      - id: FAIL-OPT-MAIN
+        title: 主窗为空
+        kind: 应用误用
+        when: mainWindow 为空
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createSubWindowWithOptions\]msg: mainWindow is nullptr'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnCreateSubWindowWithOptions
+      - id: FAIL-TOPMOST-PERM
+        title: 模态子窗 topmost 无系统权限
+        kind: 应用误用
+        when: 模态+topmost 缺权限
+        meaning: 断在 NAPI
+        regex: 'Modal subwindow has topmost, but no system permission'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnCreateSubWindowWithOptions
+      - id: FAIL-NORMAL-TOPMOST
+        title: 普通子窗不支持 topmost
+        kind: 应用误用
+        when: 非模态却设 topmost
+        meaning: 断在 NAPI
+        regex: 'Normal subwindow not support topmost'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowUtils
+
+  - id: show_subwindow
+    title: 显示子窗口
+    api: Window.showWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 showWindow, symbols: [Window.showWindow] }
+      - { layer_id: L-NAPI, name: NAPI Show, symbols: [JsWindow.OnShowWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Show, symbols: [WindowSessionImpl.Show] }
+    enter:
+      - id: IN-SHOW-SUB
+        meaning: 已进入 showWindow
+        regex: '\[window\]\[showWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+    success:
+      - id: OK-SHOW-SUB
+        meaning: show 完成
+        regex: 'show end, ret='
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+    failures:
+      - id: FAIL-SHOW-SUB
+        title: Show 失败
+        kind: 框架缺陷
+        when: Show 非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWindow\]msg: Window show failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+      - id: FAIL-SHOW-FOCUS
+        title: 模态子窗不可设 focusOnShow
+        kind: 应用误用
+        when: 模态子窗带 focusOnShow
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWindow\]msg: Modal subWindow and dialog can not set focusOnShow'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+
+  - id: destroy_subwindow
+    title: 销毁子窗口
+    api: Window.destroyWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 destroyWindow, symbols: [Window.destroyWindow] }
+      - { layer_id: L-NAPI, name: NAPI 销毁, symbols: [JsWindow.OnDestroyWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Destroy, symbols: [WindowSessionImpl.Destroy] }
+    enter:
+      - id: IN-DESTROY-SUB
+        meaning: 已进入销毁
+        regex: '\[window\]\[destroyWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow
+    success:
+      - id: OK-DESTROY-SUB
+        meaning: 销毁完成
+        regex: 'OnDestroyWindow end, window \['
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow
+    failures:
+      - id: FAIL-DESTROY-SUB
+        title: 销毁失败
+        kind: 框架缺陷
+        when: Destroy 非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[destroyWindow\]msg: Window destroy failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow

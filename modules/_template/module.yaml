@@ -3,86 +3,98 @@
 # 给人看的（title / meaning / do / locate / when / kind / description）一律简体中文。
 # 只保留英文：API 符号、文件路径、日志原文与正则、错误码、稳定 ID、tag。
 #
-# 八类：
-#   1. log_whitelist     白名单：命中 = 当前这份 YAML 的模块问题（阶段一）
-#   2. log_blacklist     黑名单：命中 = 其他模块问题，必须填 to_module；对方未接入则为「非窗口问题：名称」
-#   3. apis.internal     对内接口：对照调用链，不进前端多选
-#   4. apis.external     对外接口：前端按预分流模块勾选
-#   5. apis.dependencies 外部依赖：本模块调用的其他模块接口
-#   6. atoms             原子 = 一次对外操作（创建/启动/停止），不是「一个故障故事」
-#   7. atoms[].callchain + enter / success / failures
-#   8. collect.regex     只给用户一条正则，复制到 BetaClub
+# 七类：
+#   1. log_blacklist     黑名单：命中 = 问题的责任模块。to_module 已接入则分到该模块；未接入则为「非窗口问题：名称」
+#   2. apis.internal     对内接口：对照调用链，不进前端多选（含 WM 实现 + SceneBoard 控件符号）
+#   3. apis.external     对外接口：前端按预分流模块勾选（只列指南/DTS 公开 API）
+#   4. apis.dependencies 外部依赖：本模块调用的其他模块接口
+#   5. atoms             原子 = 一次对外操作（创建/启动/停止），不是「一个故障故事」
+#   6. atoms[].callchain + enter / success / failures
+#   7. collect.regex     只给用户一条正则，复制到 BetaClub（= 各原子探针并集）
 #
 # 阶段二怎么用（引擎，不是查表套故事）：
 #   日志按行顺序扫各原子的 进入 / 成功 / 已知失败
 #   → 还原时间线：创建✓ → 启动✓ → 停止✗
 #   → 命中某原子「已知失败」：按设计失败，标红该失败所在层
-#   → 有「进入」但既无成功也无已知失败：未知，更像真实 bug，标红进入之后下一层
+#   → 有「进入」但既无成功也无已知失败：未知，更像真实 bug，标红「最后一次 enter 所在层」的下一层
 #   禁止再写 SC-第二次启动失败 这种组合故事；组合由时间线自动拼出来
 #
+# ---------- 写模块前先想清楚（窗口子系统尤其重要）----------
+# A. 职责拆分：应用 API → window_manager（实例/生命周期）→ 内部通知 → SceneBoard（显示/布局/层级/控件）
+#    FE 不是「应用调 @ohos.xxx」，而是 SceneBoard 产品层窗口控件。无控件的纯协议模块可删 L-SCB。
+# B. success 语义：用户主诉是什么，「成功」就卡在哪一层。
+#    主诉是显示（看不见、错位、控制条）→ success 只能是 SceneBoard 挂上/排完；
+#    WM 的 create/show success 只能放 enter（进度），否则会盖住「窗已建但看不见」。
+# C. 调用链顺序：先失败早退的依赖，再实例层，最后把「用户可感知终点」放在链尾附近，
+#    这样 unknown（有 enter 无 success）会标红终点层。
+# D. 黑名单用指南官方邻居名，一条一类，不要「子窗/悬浮窗」糊在一起。
+# E. 日志正则必须来自源码原文，禁止编造；collect = enter∪success∪failures 并集，只一条。
+#
 # 复制本目录为 modules/<id>/，改 module_id 与 enabled: true。
+# 样例：modules/pip/（画中画，显示优先）。
 
 schema_version: "2.3.0"
 module_id: replace_me
 enabled: false
 
 meta:
-  name: （中文模块名）
+  name: （中文模块名，与指南官方名一致）
   name_en: ModuleName
-  subsystem: （子系统）
+  subsystem: Window
   field_id: RF-REPLACE
   field_name: （责任田显示名）
   description: |
-    【做什么】一句话说清这个模块给应用提供什么。
-    【典型现象】应分流到本模块的中文说法。
-    【不要分流】和相邻模块的边界，写中文模块名。
-    【怎么定位】阶段二用原子时间线回放，不套故障故事。
+    【做什么】一句话说清：应用拿到什么；WM 管什么；SceneBoard（若有）管什么。
+    【典型现象】先写主诉（窗口类多为显示：没出来/错位/控制条），再写少数 API 误用。
+    【不要分流】相邻模块用指南官方名（子窗口、全局悬浮窗、闪控窗、闪控球、自由窗口、窗口模式…）。
+    【怎么定位】阶段二用原子时间线。写明「什么叫成功」：
+    若主诉是显示，写清不以 WM show success 当成功，而以 SceneBoard 挂控件/布局为成功。
   owners: []
   kb:
     path: ""
     feature_dir: ""
 
-# 1. 日志白名单（分流用，确认「是本模块」）
-log_whitelist:
-  - id: WL-TAG
-    regex: '\bREPLACE_TAG\b'
-    flags: i
-    meaning: 本模块主 tag，命中即可确认归本模块
-
-# 2. 日志黑名单（分流用，确认「是别人」）
+# 1. 日志黑名单（分流用，表示问题的责任模块）
+# 一条只指向一个官方邻居；to_module 对方未接入可留空，但 to_module_name 必填
 log_blacklist:
-  - id: BL-OTHER
+  - id: BL-NEIGHBOR
     regex: '\bOTHER_MODULE_TAG\b'
     flags: i
     to_module: other_module_id
-    to_module_name: （对方模块中文名）
-    reason: 命中则归对方模块
-    unless_whitelist: true
+    to_module_name: （对方模块中文名，指南官方名）
+    reason: 更像对方模块
 
 # 3 / 4 / 5. 接口（仅 external 出现在前端勾选）
 apis:
   external:
-    - { id: ReplaceMe.create, label: ReplaceMe.create, role: 创建 }
-    - { id: ReplaceMe.start, label: ReplaceMe.start, role: 启动 }
+    - { id: ReplaceMe.create, role: 创建控制器（若本模块 create 不建窗，写清楚） }
+    - { id: ReplaceMe.start, role: 启动（真正建实例 / 对用户可见的那一步写在 success 语义里） }
+    - { id: ReplaceMe.stop, role: 停止 }
   internal:
-    - { id: ReplaceMeController, label: ReplaceMeController, role: 框架实现，仅定位 }
+    - { id: JsReplaceMe, role: NAPI 校验与转发 }
+    - { id: ReplaceMeController, role: WM 侧控制器 / 状态机 }
+    - { id: ReplaceScbPanel, role: SceneBoard 窗口容器（挂会话、层级）；无则删 }
+    - { id: ReplaceScbScene, role: SceneBoard 单窗控件（布局/拖拽）；无则删 }
   dependencies:
-    - { id: OtherModule.foo, label: OtherModule.foo, module: other, role: 外部依赖，仅定位 }
+    - { id: OtherModule.foo, module: other, role: 外部依赖，仅定位 }
 
 # 8. 给用户的唯一搜集正则（各原子 enter/success/failures 的并集，不要多条）
 collect:
   title: 请复制下面这一条正则到 BetaClub 搜集日志
   where: BetaClub
   hint: 只需这一条。搜集后把命中行完整粘贴到阶段二
-  regex: '\bREPLACE_TAG\b'
+  regex: >-
+    (?:REPLACE_WMS_TAG|ReplaceScbManager|ReplaceScbPanel|ReplaceMe\s+create|ReplaceMe\s+start|ReplaceMe\s+stop)
 
 # 6 + 7. 原子：代码里的一次对外调用
 # 调用链 = 这次调用真实经过的层（不要预先标 exception）
-# 进入 = 这次调用已经进框架（用来发现「进了但没下文」的真 bug）
-# 成功 = 这次调用走完了
-# 已知失败 = 按设计失败（应用误用 / 依赖失败）；kind 只能是下面三个中文之一：
-#   应用误用 | 依赖失败 | 框架缺陷
-# 未登记的失败不要硬编成故事；留给引擎报「未知」
+# 进入 = 已进框架，或中间层进度（WM show 等）；用来发现「进了但没下文」
+# 成功 = 对用户/主诉而言这次调用走完了（显示类模块 = SceneBoard 终点）
+# 已知失败 = 按设计失败；kind 只能是：应用误用 | 依赖失败 | 框架缺陷
+# 未登记的失败不要硬编；留给引擎报「未知」
+#
+# 推荐层 id（可按模块增删，保持同一模块内稳定）：
+#   L-JS / L-NAPI / L-WM-CLIENT / L-WM-SESSION / L-SCB / L-DEP-* 
 atoms:
   - id: create
     title: 创建
@@ -90,7 +102,7 @@ atoms:
     callchain:
       - { layer_id: L-JS, name: 应用调用, do: 组装参数并调用对外接口, symbols: [ReplaceMe.create] }
       - { layer_id: L-NAPI, name: NAPI 校验与转发, do: 校验参数后转发到框架, symbols: [JsReplaceMe] }
-      - { layer_id: L-CPP, name: 框架实现, do: 真正创建, symbols: [ReplaceMeController] }
+      - { layer_id: L-WM-CLIENT, name: 构造控制器, do: 只拿控制器、不建窗（若 create 就建窗则改 do）, symbols: [ReplaceMeController] }
     enter:
       - id: IN-CREATE
         meaning: 已进入创建
@@ -100,11 +112,11 @@ atoms:
         function: JsReplaceMe
     success:
       - id: OK-CREATE
-        meaning: 创建完成，已有控制器
+        meaning: 创建完成，已有控制器（窗口要等 start）
         regex: 'ReplaceMe\s+create\s+success'
         flags: i
-        layer_id: L-CPP
-        function: ReplaceMeController
+        layer_id: L-NAPI
+        function: JsReplaceMe
     failures:
       - id: FAIL-PARAM
         title: 参数非法
@@ -120,10 +132,15 @@ atoms:
   - id: start
     title: 启动
     api: ReplaceMe.start
+    # 显示优先写法：WM 建窗/show 放 enter；success 只留用户可见终点（常为 L-SCB）
+    # 纯协议、无显示控件的模块：可把 success 留在 L-WM-CLIENT，并删掉 L-SCB
     callchain:
       - { layer_id: L-JS, name: 应用调用, do: 调用启动, symbols: [ReplaceMe.start] }
       - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsReplaceMe] }
-      - { layer_id: L-CPP, name: 状态机与窗口, do: 按当前状态决定放行或拒绝, symbols: [ReplaceMeController] }
+      - { layer_id: L-WM-CLIENT, name: 状态机与建窗, do: 校验后创建窗口实例, symbols: [ReplaceMeController] }
+      - { layer_id: L-DEP-X, name: 外部依赖, do: start 前依赖检查，失败则整次启动失败, symbols: [OtherModule.foo] }
+      - { layer_id: L-WM-SESSION, name: 窗口实例已出, do: 实例/show 成功（进度，不等于用户看得见）, symbols: [ReplaceMeController] }
+      - { layer_id: L-SCB, name: SceneBoard 挂控件（显示终点）, do: 挂会话、排布局、画系统控件；只有这里成功用户才看见, symbols: [ReplaceScbPanel, ReplaceScbScene] }
     enter:
       - id: IN-START
         meaning: 已进入启动
@@ -131,13 +148,19 @@ atoms:
         flags: i
         layer_id: L-NAPI
         function: JsReplaceMe
-    success:
-      - id: OK-START
-        meaning: 启动完成
+      - id: IN-START-WM
+        meaning: WM 侧已建窗/show（进度，还不算显示成功）
         regex: 'ReplaceMe\s+start\s+success'
         flags: i
-        layer_id: L-CPP
+        layer_id: L-WM-SESSION
         function: ReplaceMeController
+    success:
+      - id: OK-START-SCB
+        meaning: SceneBoard 已挂上窗口控件（显示成功）
+        regex: 'ReplaceScbPanel:\s*onCreateSpecificScene'
+        flags: i
+        layer_id: L-SCB
+        function: ReplaceScbPanel
     failures:
       - id: FAIL-REPEAT-START
         title: 重复启动
@@ -147,14 +170,65 @@ atoms:
         locate: 对照日志里的 state / curState
         regex: 'ReplaceMe\s+already\s+starting'
         flags: i
-        layer_id: L-CPP
+        layer_id: L-WM-CLIENT
         function: ReplaceMeController
-      - id: FAIL-START-INTERNAL
-        title: 框架启动失败
-        kind: 框架缺陷
-        when: 参数合法且状态允许，但框架没把窗口拉起来
-        meaning: 启动已进入控制器但未完成
-        regex: 'ReplaceMe\s+start\s+failed'
+      - id: FAIL-START-DEP
+        title: 外部依赖失败
+        kind: 依赖失败
+        when: start 前依赖检查失败
+        meaning: 断在依赖，窗口未拉起
+        regex: 'ReplaceMe\s+dependency\s+failed'
         flags: i
-        layer_id: L-CPP
+        layer_id: L-DEP-X
+        function: OtherModule.foo
+      - id: FAIL-START-WM
+        title: 框架建窗失败
+        kind: 框架缺陷
+        when: 参数合法且状态允许，但 WM 没把窗口实例拉起来
+        meaning: 断在窗口实例侧
+        regex: 'ReplaceMe\s+create\s+window\s+failed'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: ReplaceMeController
+      - id: FAIL-START-SCB
+        title: SceneBoard 未挂上或显示失败
+        kind: 框架缺陷
+        when: WM 已出实例，但控件未挂上 / 不可显示
+        meaning: 显示断在 SceneBoard
+        regex: 'ReplaceScbPanel:\s*(?:onStartFailed|enable show is false)'
+        flags: i
+        layer_id: L-SCB
+        function: ReplaceScbPanel
+
+  - id: stop
+    title: 停止
+    api: ReplaceMe.stop
+    callchain:
+      - { layer_id: L-JS, name: 应用调用, do: 调用停止, symbols: [ReplaceMe.stop] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsReplaceMe] }
+      - { layer_id: L-WM-CLIENT, name: 状态机与销毁, do: 销毁窗口实例, symbols: [ReplaceMeController] }
+      - { layer_id: L-SCB, name: SceneBoard 拆控件, do: 卸会话、拆控件, symbols: [ReplaceScbPanel] }
+    enter:
+      - id: IN-STOP
+        meaning: 已进入停止
+        regex: 'ReplaceMe\s+stop\s+enter'
+        flags: i
+        layer_id: L-NAPI
+        function: JsReplaceMe
+    success:
+      - id: OK-STOP
+        meaning: 窗口已停止
+        regex: 'ReplaceMe\s+stop\s+success'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: ReplaceMeController
+    failures:
+      - id: FAIL-REPEAT-STOP
+        title: 重复停止
+        kind: 应用误用
+        when: 已在停止中或已停止
+        meaning: 状态机拒绝
+        regex: 'ReplaceMe\s+repeat\s+stop'
+        flags: i
+        layer_id: L-WM-CLIENT
         function: ReplaceMeController

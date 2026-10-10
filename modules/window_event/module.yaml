@@ -1,0 +1,211 @@
+# Watchman 多模输入事件 YAML 2.3
+# 指南模块名：使用WindowManager管理多模输入事件
+# 对外接口分册：apis/使用WindowManager管理多模输入事件.md
+# 四仓：
+#   应用 API → NDK oh_window_event_filter / oh_window（非独立 SceneBoard Panel）
+#   协议落地 → window_window_manager（WMSEvent）
+#   SceneBoard：无独立事件 Panel；success 卡 L-WM-CLIENT
+# 头文件：window_manager/oh_window_event_filter.h、oh_window.h
+# NDK：window_window_manager/interfaces/kits/ndk/wm、wm/src/oh_window_event_filter.cpp
+schema_version: "2.3.0"
+module_id: window_event
+enabled: true
+meta:
+  name: 使用WindowManager管理多模输入事件
+  name_en: WindowEventFilter
+  subsystem: Window
+  field_id: RF-WMS-EVENT
+  field_name: WMS-Event
+  description: |
+    【做什么】在多模输入经过窗口时拦截，阻止向下分发；也可向指定窗口注入触摸事件。
+    应用走 NDK（OH_NativeWindowManager_RegisterKeyEventFilter / Unregister* /
+    OH_WindowManager_InjectTouchEvent），库 libnative_window_manager.so。
+    主责在 window_manager（WMSEvent）；无独立 SceneBoard 控件。
+    【典型现象】按键过滤未生效、windowId 非法、设备不支持 filter、注入触摸失败。
+    【不要分流】窗口焦点 → 窗口焦点；布局坐标换算本身 → 窗口布局（仅 getWindowProperties 辅助）；
+    画中画/闪控 → 对应窗口类型模块。
+    【怎么定位】success 卡在 L-WM-CLIENT/NDK 注册成功日志。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/window_event
+log_blacklist:
+  - id: BL-FOCUS
+    regex: '(?:\bWMSFocus\b|shiftAppWindowFocus|setWindowFocusable)'
+    flags: i
+    to_module: window_focus
+    to_module_name: 窗口焦点
+    reason: 焦点不是输入过滤
+  - id: BL-LAYOUT
+    regex: '(?:\bWMSLayout\b|moveWindowTo)'
+    flags: i
+    to_module: window_layout
+    to_module_name: 窗口布局
+    reason: 布局不是输入过滤
+  - id: BL-LIFE
+    regex: '(?:\bWMSLife\b|Window show success)'
+    flags: i
+    to_module: window_lifecycle
+    to_module_name: 窗口生命周期
+    reason: 生命周期不是输入过滤
+  - id: BL-PIP
+    regex: '(?:WMS_PIP|SCBPiPManager)'
+    flags: i
+    to_module: pip
+    to_module_name: 画中画
+    reason: 更像画中画
+apis:
+  external:
+    - { id: OH_NativeWindowManager_RegisterKeyEventFilter, role: 注册按键过滤回调 }
+    - { id: OH_NativeWindowManager_UnregisterKeyEventFilter, role: 取消按键过滤 }
+    - { id: OH_NativeWindowManager_RegisterMouseEventFilter, role: 注册鼠标过滤回调 }
+    - { id: OH_NativeWindowManager_UnregisterMouseEventFilter, role: 取消鼠标过滤 }
+    - { id: OH_NativeWindowManager_RegisterTouchEventFilter, role: 注册触摸过滤回调 }
+    - { id: OH_NativeWindowManager_UnregisterTouchEventFilter, role: 取消触摸过滤 }
+    - { id: OH_WindowManager_InjectTouchEvent, role: 向指定窗口注入触摸事件 }
+  internal:
+    - { id: OH_NativeWindowManager_RegisterKeyEventFilter, role: NDK 注册入口 }
+    - { id: WindowSessionImpl.SetKeyEventFilter, role: WM 保存 filter }
+    - { id: WindowSessionImpl.ClearKeyEventFilter, role: WM 清除 filter }
+    - { id: OH_WindowManager_InjectTouchEvent, role: NDK 注入入口 }
+    - { id: Window.InjectTouchEvent, role: WM 注入触摸 }
+  dependencies:
+    - { id: Window.getWindowProperties, module: window_layout, role: 坐标换算可参考窗口属性 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSEvent|register success, windowId=|clear success, windowId=|Set filter failed, the device is not supported|Clear filter failed, device is not supported|keyEventFilter is null|window is null, windowId=|touchEvent is null|windowId is invalid|windowIds are not equal|pointerEvent is null|windowId is default)
+atoms:
+  - id: register_key_event_filter
+    title: 注册按键过滤
+    api: OH_NativeWindowManager_RegisterKeyEventFilter
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 RegisterKeyEventFilter, symbols: [OH_NativeWindowManager_RegisterKeyEventFilter] }
+      - { layer_id: L-NAPI, name: NDK 入口校验, symbols: [OH_NativeWindowManager_RegisterKeyEventFilter] }
+      - { layer_id: L-WM-CLIENT, name: 写入 KeyEventFilter（协议终点）, symbols: [WindowSessionImpl.SetKeyEventFilter] }
+    enter: []
+    success:
+      - id: OK-REG-KEY
+        meaning: 按键过滤注册成功
+        regex: 'register success, windowId='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: OH_NativeWindowManager_RegisterKeyEventFilter
+    failures:
+      - id: FAIL-REG-KEY-WINDOW
+        title: windowId 无效
+        kind: 应用误用
+        when: 找不到窗口
+        meaning: 断在 NDK
+        regex: 'window is null, windowId='
+        flags: i
+        layer_id: L-NAPI
+        function: OH_NativeWindowManager_RegisterKeyEventFilter
+      - id: FAIL-REG-KEY-PARAM
+        title: filter 为空
+        kind: 应用误用
+        when: keyEventFilter == nullptr
+        meaning: 断在 NDK
+        regex: 'keyEventFilter is null'
+        flags: i
+        layer_id: L-NAPI
+        function: OH_NativeWindowManager_RegisterKeyEventFilter
+      - id: FAIL-REG-KEY-DEVICE
+        title: 设备不支持
+        kind: 依赖失败
+        when: SetKeyEventFilter 失败
+        meaning: 断在 WM
+        regex: 'Set filter failed, the device is not supported'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: OH_NativeWindowManager_RegisterKeyEventFilter
+
+  - id: unregister_key_event_filter
+    title: 取消按键过滤
+    api: OH_NativeWindowManager_UnregisterKeyEventFilter
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 UnregisterKeyEventFilter, symbols: [OH_NativeWindowManager_UnregisterKeyEventFilter] }
+      - { layer_id: L-NAPI, name: NDK 入口, symbols: [OH_NativeWindowManager_UnregisterKeyEventFilter] }
+      - { layer_id: L-WM-CLIENT, name: 清除 KeyEventFilter（协议终点）, symbols: [WindowSessionImpl.ClearKeyEventFilter] }
+    enter: []
+    success:
+      - id: OK-UNREG-KEY
+        meaning: 按键过滤已清除
+        regex: 'clear success, windowId='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: OH_NativeWindowManager_UnregisterKeyEventFilter
+    failures:
+      - id: FAIL-UNREG-KEY-WINDOW
+        title: windowId 无效
+        kind: 应用误用
+        when: 找不到窗口
+        meaning: 断在 NDK
+        regex: 'window is null, windowId='
+        flags: i
+        layer_id: L-NAPI
+        function: OH_NativeWindowManager_UnregisterKeyEventFilter
+      - id: FAIL-UNREG-KEY-DEVICE
+        title: 清除失败
+        kind: 依赖失败
+        when: ClearKeyEventFilter 失败
+        meaning: 断在 WM
+        regex: 'Clear filter failed, device is not supported'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: OH_NativeWindowManager_UnregisterKeyEventFilter
+
+  - id: inject_touch_event
+    title: 注入触摸事件
+    api: OH_WindowManager_InjectTouchEvent
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 InjectTouchEvent, symbols: [OH_WindowManager_InjectTouchEvent] }
+      - { layer_id: L-NAPI, name: NDK 参数校验, symbols: [OH_WindowManager_InjectTouchEvent] }
+      - { layer_id: L-WM-CLIENT, name: WM 注入（协议终点）, symbols: [Window.InjectTouchEvent] }
+    enter:
+      - id: IN-INJECT
+        meaning: 注入路径补齐默认 windowId
+        regex: 'windowId is default'
+        flags: i
+        layer_id: L-NAPI
+        function: OH_WindowManager_InjectTouchEvent
+    success: []
+    failures:
+      - id: FAIL-INJECT-NULL
+        title: touchEvent 为空
+        kind: 应用误用
+        when: touchEvent == nullptr
+        meaning: 断在 NDK
+        regex: 'touchEvent is null'
+        flags: i
+        layer_id: L-NAPI
+        function: OH_WindowManager_InjectTouchEvent
+      - id: FAIL-INJECT-ID
+        title: windowId 非法
+        kind: 应用误用
+        when: windowId <= 0 或与事件内 id 不一致
+        meaning: 断在 NDK
+        regex: '(?:windowId is invalid|windowIds are not equal)'
+        flags: i
+        layer_id: L-NAPI
+        function: OH_WindowManager_InjectTouchEvent
+      - id: FAIL-INJECT-WINDOW
+        title: 窗口不存在
+        kind: 应用误用
+        when: GetWindowWithId 失败
+        meaning: 断在 NDK 任务
+        regex: 'window is null, windowId='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: OH_WindowManager_InjectTouchEvent
+      - id: FAIL-INJECT-POINTER
+        title: pointerEvent 转换失败
+        kind: 框架缺陷
+        when: TouchEventToPointerEvent 失败
+        meaning: 断在 NDK
+        regex: 'pointerEvent is null'
+        flags: i
+        layer_id: L-NAPI
+        function: OH_WindowManager_InjectTouchEvent

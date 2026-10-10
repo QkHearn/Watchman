@@ -1,0 +1,342 @@
+# Watchman 闪控球 YAML 2.3
+# 指南模块名：闪控球（窗口类型 · 辅助窗口）
+# 对外接口分册：apis/闪控球.md
+# 四仓：
+#   应用 API → window_window_manager（floating_ball_napi / FloatingBallController）
+#   显示/模板/拖拽 → window_scene_board（phonebase/.../floatingball，仅 Phone/Pad）
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.floatingBall.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/floating_ball_napi
+# FE：window_scene_board/product/phonebase/.../scenemanager/floatingball/
+# 注意：WM tag 为共享 WMSSystem，分流不单靠这个 tag。
+# 显示优先：start/update 的 success 以 SceneBoard「Create floating ball end」为准。
+schema_version: "2.3.0"
+module_id: floating_ball
+enabled: true
+meta:
+  name: 闪控球
+  name_en: FloatingBall
+  subsystem: Window
+  field_id: RF-WMS-FB
+  field_name: WMS-FloatingBall
+  description: |
+    【做什么】应用辅助窗口。应用走 @ohos.window.floatingBall；
+    window_manager 管控制器与窗口实例；SceneBoard（SCBFloatingBallPanel）管挂球、模板绘制、拖拽贴边。
+    create 只拿控制器；startFloatingBall 才建窗；用户看见球要等 SceneBoard Create floating ball end。
+    【典型现象】主诉多为显示：球没出来、错位、贴边异常、模板不更新、点不动；
+    少数：设备不支持、主窗未 show、重复 start/stop、与闪控窗冲突。
+    【不要分流】画中画 / 闪控窗 / 全局悬浮窗 / 子窗口。
+    【怎么定位·显示优先】不以 WM Create/Show 当启动成功；success 卡在 L-SCB。
+    WM 日志 tag 显示为 WMSSystem（与闪控窗共用），分流靠特征串 + SceneBoard TAG。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/floating_ball
+log_blacklist:
+  - id: BL-PIP
+    regex: '(?:WMS_PIP|OnStartPictureInPicture|SCBPiPManager|SCBPictureInPicture)'
+    flags: i
+    to_module: pip
+    to_module_name: 画中画
+    reason: 更像画中画
+  - id: BL-FLOAT-VIEW
+    regex: '(?:OnStartFloatView|JsFloatViewManager|float view|FloatViewController)'
+    flags: i
+    to_module: float_view
+    to_module_name: 闪控窗
+    reason: 更像闪控窗
+  - id: BL-GLOBAL-FLOAT
+    regex: '(?:\bfloatWindow\b|TYPE_FLOAT|SYSTEM_FLOAT_WINDOW)'
+    flags: i
+    to_module: global_floating_window
+    to_module_name: 全局悬浮窗
+    reason: 更像全局悬浮窗
+  - id: BL-SUBWINDOW
+    regex: '(?:createSubWindowWithOptions|createSubWindow|\bsubWindow\b)'
+    flags: i
+    to_module: subwindow
+    to_module_name: 子窗口
+    reason: 更像子窗口
+apis:
+  external:
+    - { id: floatingBall.isFloatingBallEnabled, role: 判断设备是否支持闪控球 }
+    - { id: floatingBall.create, role: 创建控制器（不建窗） }
+    - { id: FloatingBallController.startFloatingBall, role: 启动（真正建窗） }
+    - { id: FloatingBallController.updateFloatingBall, role: 更新模板内容 }
+    - { id: FloatingBallController.stopFloatingBall, role: 停止 }
+    - { id: FloatingBallController.getFloatingBallWindowInfo, role: 获取窗口信息 }
+    - { id: FloatingBallController.restoreMainWindow, role: 恢复主窗口 }
+    - { id: FloatingBallController.on, label: "FloatingBallController.on('stateChange'|'click')", role: 状态/点击监听 }
+  internal:
+    - { id: JsFbWindowManager, role: NAPI 创建与设备校验 }
+    - { id: JsFbController, role: NAPI 启停与更新转发 }
+    - { id: FloatingBallController, role: WM 控制器与状态机 }
+    - { id: FloatingBallManager, role: 控制器管理 }
+    - { id: FloatWindowManager.CreateFbWindow, role: 框架内真正创建闪控球窗口 }
+    - { id: SCBFloatingBallPanel, role: SceneBoard 闪控球容器 }
+    - { id: FloatingBallPanelVm, role: SceneBoard 挂球/卸球/更新模板 }
+    - { id: FloatingBallListVm, role: SceneBoard 球列表 }
+  dependencies:
+    - { id: WindowStage.getMainWindow, module: main_window, role: 依赖主窗口已显示 }
+    - { id: floatView.bind, module: float_view, role: 可与闪控窗绑定联动 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:OnStartFloatingBall|OnStopFloatingBall|OnUpdateFloatingBall|OnRestoreMainWindow|CreateJsFbController|JsFbWindowManagerInit create|FloatingBallController|Create fb window failed|Show fb window failed|Window create failed|is not shown|OnStartFloatingBall abort|fbWindow state is|Repeat stop request|cur state is not started|Fb static template can't update|Fb template type can't update|there are active float view can not create flaotingb ball|Device is not phone or pad|Create floating ball end|Create floating ball error|createSpecificScene|prepareRemoveFb|updateFbTemplateInfo|start updateFloatingBall|start delete ball|SCBFloatingBallPanel|FloatingBallPanelVm|FloatingBallListVm|START_FLOATING_BALL|\[FBWindow\])
+atoms:
+  - id: create
+    title: 创建
+    api: floatingBall.create
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 create, symbols: [floatingBall.create] }
+      - { layer_id: L-NAPI, name: NAPI 校验, do: JsFbWindowManager 解析配置、校验设备, symbols: [JsFbWindowManager] }
+      - { layer_id: L-WM-CLIENT, name: 构造控制器, do: new FloatingBallController；此时还不建窗, symbols: [FloatingBallController] }
+    enter:
+      - id: IN-CREATE
+        meaning: 已进入 create
+        regex: 'JsFbWindowManagerInit create'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFbWindowManager
+    success:
+      - id: OK-CREATE
+        meaning: 控制器已创建
+        regex: 'CreateJsFbController'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFbController
+    failures:
+      - id: FAIL-CREATE-DEVICE
+        title: 设备不支持闪控球
+        kind: 应用误用
+        when: 非 Phone/Pad
+        meaning: 断在 NAPI 能力校验
+        regex: 'Device is not phone or pad, do not support floating ball'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFbWindowManager
+
+  - id: start
+    title: 启动
+    api: FloatingBallController.startFloatingBall
+    # 显示优先：WM Create/Show 无独立 success 串，只作 enter；success 仅 L-SCB
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 startFloatingBall, symbols: [FloatingBallController.startFloatingBall] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsFbController] }
+      - { layer_id: L-WM-CLIENT, name: 状态机与建窗, do: 校验状态后 CreateFb + Show, symbols: [FloatingBallController] }
+      - { layer_id: L-WM-SESSION, name: 窗口实例已出, do: CreateFbWindow/Show 进度（不等于球显示出来）, symbols: [FloatWindowManager.CreateFbWindow] }
+      - { layer_id: L-SCB, name: SceneBoard 挂球（显示终点）, do: FloatingBallPanelVm 创建球控件, symbols: [SCBFloatingBallPanel, FloatingBallPanelVm] }
+    enter:
+      - id: IN-START
+        meaning: 已进入 startFloatingBall
+        regex: 'OnStartFloatingBall is called'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFbController
+      - id: IN-START-SCB
+        meaning: SceneBoard 收到创建会话（进度）
+        regex: 'createSpecificScene'
+        flags: i
+        layer_id: L-SCB
+        function: FloatingBallPanelVm
+    success:
+      - id: OK-START-SCB
+        meaning: SceneBoard 已挂上闪控球（显示成功）
+        regex: 'Create floating ball end'
+        flags: i
+        layer_id: L-SCB
+        function: FloatingBallPanelVm
+    failures:
+      - id: FAIL-START-ABORT
+        title: 启动被中止
+        kind: 应用误用
+        when: 已有冲突的启动
+        meaning: 控制器 abort
+        regex: 'OnStartFloatingBall abort'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: FloatingBallController
+      - id: FAIL-START-REPEAT
+        title: 重复启动
+        kind: 应用误用
+        when: 已在 starting/started 或 stopping
+        meaning: 状态机拒绝
+        regex: 'fbWindow state is:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: FloatingBallController
+      - id: FAIL-START-MAIN
+        title: 主窗口未显示
+        kind: 应用误用
+        when: 主窗未 show
+        meaning: 建窗校验失败
+        regex: 'is not shown'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatingBallController
+      - id: FAIL-START-CREATE
+        title: 创建闪控球窗口失败
+        kind: 框架缺陷
+        when: CreateFb 失败
+        meaning: 断在窗口实例
+        regex: '(?:Create fb window failed|Window create failed)'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatingBallController
+      - id: FAIL-START-SHOW
+        title: 显示闪控球窗口失败
+        kind: 框架缺陷
+        when: Show 失败
+        meaning: 断在窗口实例
+        regex: 'Show fb window failed'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatingBallController
+      - id: FAIL-START-FV
+        title: 与闪控窗冲突
+        kind: 依赖失败
+        when: 已有活跃闪控窗
+        meaning: 互斥拒绝建球（源码拼写 flaotingb）
+        regex: 'there are active float view can not create flaotingb ball'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatWindowManager
+      - id: FAIL-START-SCB
+        title: SceneBoard 挂球失败
+        kind: 框架缺陷
+        when: 控件创建抛错
+        meaning: 显示断在 SceneBoard
+        regex: 'Create floating ball error'
+        flags: i
+        layer_id: L-SCB
+        function: FloatingBallPanelVm
+
+  - id: update
+    title: 更新
+    api: FloatingBallController.updateFloatingBall
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 updateFloatingBall, symbols: [FloatingBallController.updateFloatingBall] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsFbController] }
+      - { layer_id: L-WM-CLIENT, name: 写模板（进度）, symbols: [FloatingBallController] }
+      - { layer_id: L-SCB, name: SceneBoard 刷新模板（显示终点）, symbols: [FloatingBallPanelVm, FloatingBallListVm] }
+    enter:
+      - id: IN-UPDATE
+        meaning: 已进入 updateFloatingBall
+        regex: 'OnUpdateFloatingBall is called'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFbController
+      - id: IN-UPDATE-SCB
+        meaning: SceneBoard 收到模板更新
+        regex: 'updateFbTemplateInfo for'
+        flags: i
+        layer_id: L-SCB
+        function: FloatingBallPanelVm
+    success:
+      - id: OK-UPDATE-SCB
+        meaning: SceneBoard 已刷新球模板
+        regex: 'start updateFloatingBall'
+        flags: i
+        layer_id: L-SCB
+        function: FloatingBallListVm
+    failures:
+      - id: FAIL-UPDATE-STATE
+        title: 未启动就更新
+        kind: 应用误用
+        when: 状态不是 started
+        meaning: 断在控制器
+        regex: 'cur state is not started, can not update'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: FloatingBallController
+      - id: FAIL-UPDATE-STATIC
+        title: 静态模板不可更新
+        kind: 应用误用
+        when: 静态模板调 update
+        meaning: 断在 WM
+        regex: "Fb static template can't update"
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatingBallController
+      - id: FAIL-UPDATE-TYPE
+        title: 不可改模板类型
+        kind: 应用误用
+        when: 试图更换 template type
+        meaning: 断在 WM
+        regex: "Fb template type can't update"
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatingBallController
+
+  - id: stop
+    title: 停止
+    api: FloatingBallController.stopFloatingBall
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 stopFloatingBall, symbols: [FloatingBallController.stopFloatingBall] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsFbController] }
+      - { layer_id: L-WM-CLIENT, name: 状态机与销毁, symbols: [FloatingBallController] }
+      - { layer_id: L-SCB, name: SceneBoard 卸球, symbols: [FloatingBallPanelVm, FloatingBallListVm] }
+    enter:
+      - id: IN-STOP
+        meaning: 已进入 stopFloatingBall
+        regex: 'OnStopFloatingBall'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFbController
+      - id: IN-STOP-SCB
+        meaning: SceneBoard 开始卸球
+        regex: 'prepareRemoveFb for'
+        flags: i
+        layer_id: L-SCB
+        function: FloatingBallPanelVm
+    success:
+      - id: OK-STOP-SCB
+        meaning: SceneBoard 已删除球
+        regex: 'start delete ball'
+        flags: i
+        layer_id: L-SCB
+        function: FloatingBallListVm
+    failures:
+      - id: FAIL-STOP-REPEAT
+        title: 重复停止
+        kind: 应用误用
+        when: 已在 stopping/stopped
+        meaning: 状态机拒绝
+        regex: 'Repeat stop request, curState:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: FloatingBallController
+
+  - id: restore
+    title: 恢复主窗口
+    api: FloatingBallController.restoreMainWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 restoreMainWindow, symbols: [FloatingBallController.restoreMainWindow] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsFbController] }
+      - { layer_id: L-WM-CLIENT, name: 恢复主窗, symbols: [FloatingBallController] }
+      - { layer_id: L-SCB, name: SceneBoard 还原, symbols: [FloatingBallPanelVm] }
+    enter:
+      - id: IN-RESTORE
+        meaning: 已进入 restoreMainWindow
+        regex: 'OnRestoreMainWindow'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFbController
+    success:
+      - id: OK-RESTORE-SCB
+        meaning: SceneBoard 还原主窗成功
+        regex: 'restoreFbMainWindow succeed'
+        flags: i
+        layer_id: L-SCB
+        function: FloatingBallPanelVm
+    failures:
+      - id: FAIL-RESTORE-SCB
+        title: SceneBoard 还原主窗失败
+        kind: 框架缺陷
+        when: restoreFbMainWindow 失败
+        meaning: 断在 SceneBoard
+        regex: 'restoreFbMainWindow failed'
+        flags: i
+        layer_id: L-SCB
+        function: FloatingBallPanelVm

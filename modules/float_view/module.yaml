@@ -1,0 +1,279 @@
+# Watchman 闪控窗 YAML 2.3
+# 指南模块名：闪控窗（窗口类型 · 辅助窗口）
+# 对外接口分册：apis/闪控窗.md
+# 四仓：
+#   应用 API → window_window_manager（float_view_napi / FloatViewController）
+#   显示 → SceneBoard 无独立 floatview 目录；TYPE_FLOAT_VIEW 回落到 ABOVE_SCENE_PANEL 通用挂载
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.floatView.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/float_view_napi
+# 注意：WM tag 为共享 WMSSystem；勿把 SCBFloatManager（智慧多窗）当本模块。
+# 显示优先：start success 卡在通用 onCreateSpecificSession / onCreateSpecificScene（弱，需叠 WM 特征）。
+schema_version: "2.3.0"
+module_id: float_view
+enabled: true
+meta:
+  name: 闪控窗
+  name_en: FloatView
+  subsystem: Window
+  field_id: RF-WMS-FV
+  field_name: WMS-FloatView
+  description: |
+    【做什么】系统统一绘制 UI 的应用辅助窗口。应用走 @ohos.window.floatView；
+    window_manager 管控制器、建窗、与闪控球/画中画互斥；SceneBoard 无专用 Panel，
+    TYPE_FLOAT_VIEW 回落到 ABOVE_SCENE_PANEL 通用挂载。
+    create 只拿控制器；start 才建窗。
+    【典型现象】主诉多为显示：窗没出来、错位、模板切换异常；
+    少数：设备不支持、主窗非前台、重复 start/stop、已有闪控球/画中画冲突。
+    【不要分流】画中画 / 闪控球 / 全局悬浮窗 / 子窗口；SCBFloatManager/isFloatView → 自由窗口（智慧多窗）。
+    【怎么定位·显示优先】WM Show / start in 只作进度；success 以 SceneBoard 通用 onCreateSpecificSession 为弱终点。
+    分流必须叠 float view 特征串，不能单靠 WMSSystem 或通用 onCreateSpecificScene。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/float_view
+log_blacklist:
+  - id: BL-PIP
+    regex: '(?:WMS_PIP|OnStartPictureInPicture|SCBPiPManager|SCBPictureInPicture)'
+    flags: i
+    to_module: pip
+    to_module_name: 画中画
+    reason: 更像画中画
+  - id: BL-FLOATING-BALL
+    regex: '(?:OnStartFloatingBall|FloatingBallController|SCBFloatingBall|Create floating ball)'
+    flags: i
+    to_module: floating_ball
+    to_module_name: 闪控球
+    reason: 更像闪控球
+  - id: BL-GLOBAL-FLOAT
+    regex: '(?:\bfloatWindow\b|TYPE_FLOAT|SYSTEM_FLOAT_WINDOW)'
+    flags: i
+    to_module: global_floating_window
+    to_module_name: 全局悬浮窗
+    reason: 更像全局悬浮窗；勿用 isFloatView（智慧多窗）
+  - id: BL-FREEFORM-FLOAT
+    regex: '(?:SCBFloatManager|resetFloatViewWithFold)'
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: 智慧多窗悬浮，不是 @ohos.window.floatView
+  - id: BL-SUBWINDOW
+    regex: '(?:createSubWindowWithOptions|createSubWindow|\bsubWindow\b)'
+    flags: i
+    to_module: subwindow
+    to_module_name: 子窗口
+    reason: 更像子窗口
+apis:
+  external:
+    - { id: floatView.isFloatViewEnabled, role: 判断设备是否支持闪控窗 }
+    - { id: floatView.create, role: 创建控制器（不建窗） }
+    - { id: floatView.bind, role: 与闪控球绑定 }
+    - { id: floatView.unbind, role: 解除绑定 }
+    - { id: floatView.getFloatViewLimits, role: 获取尺寸限制 }
+    - { id: FloatViewController.start, role: 启动（真正建窗） }
+    - { id: FloatViewController.stop, role: 停止 }
+    - { id: FloatViewController.setUIContext, role: 设置 UI 上下文 }
+    - { id: FloatViewController.setWindowSize, role: 设置窗口大小 }
+    - { id: FloatViewController.switchTemplate, role: 切换模板 }
+    - { id: FloatViewController.restoreMainWindow, role: 恢复主窗口 }
+    - { id: FloatViewController.getWindowProperties, role: 获取窗口属性 }
+  internal:
+    - { id: JsFloatViewManager, role: NAPI 创建/绑定 }
+    - { id: JsFloatViewController, role: NAPI 启停与控制转发 }
+    - { id: FloatViewController, role: WM 控制器与状态机 }
+    - { id: FloatViewManager, role: 控制器管理 }
+    - { id: FloatWindowManager.CreateFvWindow, role: 框架内真正创建闪控窗 }
+    - { id: SCBSpecificScenePanel, role: SceneBoard 通用系统窗挂载（非专用 Panel） }
+    - { id: SCBSceneSessionManager, role: SceneBoard 会话分发 onCreateSpecificSession }
+  dependencies:
+    - { id: WindowStage.getMainWindow, module: main_window, role: 依赖主窗口前台 }
+    - { id: floatingBall, module: floating_ball, role: bind 联动；未绑定的活跃球会挡住 start }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:OnStartFloatView|OnStopFloatView|JsFloatViewManager|CreateJsFloatViewControllerObject|StartFloatView|START_FLOAT_VIEW|Create fv window failed|Show fv window failed|StartFloatView abort|fvWindow state is|Main window is not in foreground|add fv controller|remove fv controller|DestroyFloatWindow|Repeat stop request|Device do not support float view|there are active pip, can not create float view|there are active floating ball, can not create float view|already started float view|onCreateSpecificSession|SCBBaseSpecificScenePanelViewModel|onCreateSpecificScene)
+atoms:
+  - id: create
+    title: 创建
+    api: floatView.create
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 create, symbols: [floatView.create] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsFloatViewManager] }
+      - { layer_id: L-WM-CLIENT, name: 构造控制器, do: 只拿控制器、不建窗, symbols: [FloatViewController] }
+    enter:
+      - id: IN-CREATE
+        meaning: 已进入 create
+        regex: 'JsFloatViewManager create controller'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFloatViewManager
+    success:
+      - id: OK-CREATE
+        meaning: 控制器已创建
+        regex: 'CreateJsFloatViewControllerObject'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFloatViewController
+    failures:
+      - id: FAIL-CREATE-DEVICE
+        title: 设备不支持闪控窗
+        kind: 应用误用
+        when: 能力开关关闭
+        meaning: 断在 NAPI
+        regex: 'Device do not support float view'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFloatViewManager
+
+  - id: start
+    title: 启动
+    api: FloatViewController.start
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 start, symbols: [FloatViewController.start] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsFloatViewController] }
+      - { layer_id: L-WM-CLIENT, name: 状态机与建窗, symbols: [FloatViewController] }
+      - { layer_id: L-WM-SESSION, name: 窗口实例已出, do: CreateFv/Show 进度, symbols: [FloatWindowManager.CreateFvWindow] }
+      - { layer_id: L-SCB, name: SceneBoard 通用挂载（显示终点·弱）, do: onCreateSpecificSession → ABOVE_SCENE_PANEL, symbols: [SCBSceneSessionManager, SCBSpecificScenePanel] }
+    enter:
+      - id: IN-START
+        meaning: 已进入 start
+        regex: 'OnStartFloatView is called'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFloatViewController
+      - id: IN-START-WM
+        meaning: WM 侧已进入 StartFloatView（进度）
+        regex: 'StartFloatView called'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: FloatViewController
+    success:
+      - id: OK-START-SCB
+        meaning: SceneBoard 已分发挂载会话（显示弱成功；须对照同段有 float view WM 日志）
+        regex: 'onCreateSpecificSession:'
+        flags: i
+        layer_id: L-SCB
+        function: SCBSceneSessionManager
+    failures:
+      - id: FAIL-START-ABORT
+        title: 启动被中止
+        kind: 应用误用
+        when: 重复或冲突启动
+        meaning: 控制器 abort
+        regex: 'StartFloatView abort'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: FloatViewController
+      - id: FAIL-START-MAIN
+        title: 主窗口非前台
+        kind: 应用误用
+        when: 主窗不在 foreground
+        meaning: 建窗校验失败
+        regex: 'Main window is not in foreground'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: FloatViewController
+      - id: FAIL-START-CREATE
+        title: 创建闪控窗失败
+        kind: 框架缺陷
+        when: CreateFv 失败
+        meaning: 断在窗口实例
+        regex: 'Create fv window failed'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatViewController
+      - id: FAIL-START-SHOW
+        title: 显示闪控窗失败
+        kind: 框架缺陷
+        when: Show 失败
+        meaning: 断在窗口实例
+        regex: 'Show fv window failed'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatViewController
+      - id: FAIL-START-PIP
+        title: 与画中画冲突
+        kind: 依赖失败
+        when: 已有活跃画中画
+        meaning: 互斥拒绝
+        regex: 'there are active pip, can not create float view'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatWindowManager
+      - id: FAIL-START-FB
+        title: 与闪控球冲突
+        kind: 依赖失败
+        when: 已有未绑定的活跃闪控球
+        meaning: 互斥拒绝
+        regex: 'there are active floating ball, can not create float view'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatWindowManager
+
+  - id: stop
+    title: 停止
+    api: FloatViewController.stop
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 stop, symbols: [FloatViewController.stop] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsFloatViewController] }
+      - { layer_id: L-WM-CLIENT, name: 状态机与销毁, symbols: [FloatViewController] }
+    enter:
+      - id: IN-STOP
+        meaning: 已进入 stop
+        regex: 'OnStopFloatView'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFloatViewController
+    success:
+      - id: OK-STOP
+        meaning: 闪控窗已销毁（WM 侧；无字面 stop success）
+        regex: '(?:remove fv controller|DestroyFloatWindow)'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: FloatViewController
+    failures:
+      - id: FAIL-STOP-REPEAT
+        title: 重复停止
+        kind: 应用误用
+        when: 已在 stopping/stopped
+        meaning: 状态机拒绝
+        regex: 'Repeat stop request, curState:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: FloatViewController
+
+  - id: bind
+    title: 绑定闪控球
+    api: floatView.bind
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 bind, symbols: [floatView.bind] }
+      - { layer_id: L-NAPI, name: NAPI 绑定, symbols: [JsFloatViewManager] }
+      - { layer_id: L-DEP-FB, name: 闪控球控制器, symbols: [floatingBall] }
+    enter:
+      - id: IN-BIND
+        meaning: 已进入 bind
+        regex: 'OnBind'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFloatViewManager
+    success: []
+    failures:
+      - id: FAIL-BIND-DEVICE
+        title: 设备不支持
+        kind: 应用误用
+        when: 能力关闭
+        meaning: 断在 NAPI
+        regex: 'Device do not support float view'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFloatViewManager
+      - id: FAIL-BIND-CTRL
+        title: 控制器无效
+        kind: 应用误用
+        when: 拿不到 floatView / floatingBall 控制器
+        meaning: 断在 NAPI
+        regex: 'Failed to get (?:floatViewController|floatingBallController)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsFloatViewManager

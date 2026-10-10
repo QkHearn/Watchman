@@ -1,0 +1,226 @@
+# Watchman 窗口旋转 YAML 2.3
+# 指南模块名：窗口旋转
+# 对外接口分册：apis/窗口旋转.md
+# 四仓：
+#   应用 API → @ohos.window / @ohos.display
+#   协议落地 → window_window_manager（WMSRotation）
+#   SceneBoard：feature/layoutrotatepacking 弱相关；无专用成功日志 → success 默认 L-WM-CLIENT
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/window_runtime
+schema_version: "2.3.0"
+module_id: window_rotation
+enabled: true
+meta:
+  name: 窗口旋转
+  name_en: WindowRotation
+  subsystem: Window
+  field_id: RF-WMS-ROTATION
+  field_name: WMS-Rotation
+  description: |
+    【做什么】应用通过旋转策略改变屏幕显示方向；窗口 Orientation 与 display Orientation 不是同一概念。
+    应用走 @ohos.window（setPreferredOrientation / convertOrientationAndRotation）及 module.json5 orientation。
+    主责在 window_manager（WMSRotation）；SceneBoard layoutrotatepacking 仅弱相关布局装箱，无专用成功探针。
+    【典型现象】横竖屏不跟策略、策略已生效仍重复设置、设备不支持转换、系统窗锁旋转失败。
+    【不要分流】屏幕属性查询 → 屏幕属性；布局尺寸 → 窗口布局；沉浸全屏 → 窗口沉浸式。
+    【怎么定位】success 卡在 L-WM-CLIENT；勿把 LayoutRotatePackingProxy 当显示终点。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/window_rotation
+log_blacklist:
+  - id: BL-LAYOUT
+    regex: '(?:\bWMSLayout\b|moveWindowTo|setWindowLimits)'
+    flags: i
+    to_module: window_layout
+    to_module_name: 窗口布局
+    reason: 尺寸布局不是旋转策略
+  - id: BL-DISPLAY
+    regex: '(?:getDefaultDisplaySync|@ohos\.display)'
+    flags: i
+    to_module: display
+    to_module_name: 屏幕属性
+    reason: 读屏幕 orientation/rotation 属屏幕属性
+  - id: BL-IMMS
+    regex: '\bWMSImms\b'
+    flags: i
+    to_module: immersive
+    to_module_name: 窗口沉浸式
+    reason: 沉浸布局不是旋转
+  - id: BL-LIFE
+    regex: '(?:\bWMSLife\b|Window show success)'
+    flags: i
+    to_module: window_lifecycle
+    to_module_name: 窗口生命周期
+    reason: 生命周期不是旋转
+apis:
+  external:
+    - { id: Window.setPreferredOrientation, role: 设置旋转策略 }
+    - { id: window.Orientation, role: 旋转策略枚举 }
+    - { id: Window.convertOrientationAndRotation, role: 屏幕方向与窗口方向互转 }
+    - { id: display.getDefaultDisplaySync, role: 取屏幕 Display 再读 orientation/rotation }
+  internal:
+    - { id: JsWindow.SetPreferredOrientation, role: NAPI setPreferredOrientation }
+    - { id: WindowSessionImpl.HandleSetOrientationCommon, role: WM 写请求方向 }
+    - { id: WindowSessionImpl.ConvertOrientationAndRotation, role: WM 方向转换 }
+    - { id: WindowSessionImpl.NotifyPreferredOrientationChange, role: WM 通知偏好方向变化 }
+    - { id: LayoutRotatePackingProxy, role: SceneBoard 弱相关装箱（非成功终点） }
+  dependencies:
+    - { id: display.getDefaultDisplaySync, module: display, role: 查询屏幕 orientation/rotation }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSRotation|\[window\]\[setPreferredOrientation|lastReqOrientation:|OnPreferredOrientationChange is success|OnOrientationChange is success|policy has taken effect|window is invalid|windowSession is invalid|the value to be converted is invalid|convertedValue:|userRequestedOrientation:|is not system window|window is not pc, pad or phone, not supported|Invalid parameter value range|Send event failed)
+atoms:
+  - id: set_preferred_orientation
+    title: 设置旋转策略
+    api: Window.setPreferredOrientation
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setPreferredOrientation, symbols: [Window.setPreferredOrientation] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow.OnSetPreferredOrientation] }
+      - { layer_id: L-WM-CLIENT, name: 写请求方向（协议终点）, symbols: [WindowSessionImpl.HandleSetOrientationCommon] }
+    enter:
+      - id: IN-ORIENT
+        meaning: NAPI 进入 setPreferredOrientation
+        regex: '\[window\]\[setPreferredOrientation'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetPreferredOrientation
+    success:
+      - id: OK-ORIENT
+        meaning: 已记录 last/target 方向
+        regex: 'lastReqOrientation:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.HandleSetOrientationCommon
+      - id: OK-ORIENT-EFFECT
+        meaning: 策略已生效（幂等）
+        regex: 'policy has taken effect'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.HandleSetOrientationCommon
+      - id: OK-ORIENT-NOTIFY
+        meaning: 偏好方向变化通知成功
+        regex: 'OnPreferredOrientationChange is success'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl
+    failures:
+      - id: FAIL-ORIENT-NAPI
+        title: 参数或窗无效
+        kind: 应用误用
+        when: 窗已销毁或 orientation 越界
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setPreferredOrientation(?:WithResult)?\]msg: (?:The window is not created or destroyed|Invalid parameter value range|Send event failed)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetPreferredOrientation
+      - id: FAIL-ORIENT-INVALID
+        title: 窗口会话无效
+        kind: 应用误用
+        when: session 无效
+        meaning: 断在 WM
+        regex: 'window is invalid'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.HandleSetOrientationCommon
+
+  - id: convert_orientation_rotation
+    title: 方向与旋转互转
+    api: Window.convertOrientationAndRotation
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 convertOrientationAndRotation, symbols: [Window.convertOrientationAndRotation] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM 转换（协议终点）, symbols: [WindowSessionImpl.ConvertOrientationAndRotation] }
+    enter:
+      - id: IN-CONVERT
+        meaning: WM 进入转换
+        regex: 'convertedValue:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.ConvertOrientationAndRotation
+    success:
+      - id: OK-CONVERT
+        meaning: 已得到转换结果
+        regex: 'convertedValue:\d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.ConvertOrientationAndRotation
+    failures:
+      - id: FAIL-CONVERT-PARAM
+        title: 待转换值非法
+        kind: 应用误用
+        when: value 越界
+        meaning: 断在 WM
+        regex: 'the value to be converted is invalid'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.ConvertOrientationAndRotation
+      - id: FAIL-CONVERT-SESSION
+        title: 窗口会话无效
+        kind: 应用误用
+        when: session 无效
+        meaning: 断在 WM
+        regex: 'windowSession is invalid'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.ConvertOrientationAndRotation
+
+  - id: get_requested_orientation
+    title: 查询用户请求方向
+    api: Window.setPreferredOrientation
+    callchain:
+      - { layer_id: L-JS, name: 应用查询/设置后回读, symbols: [Window.setPreferredOrientation] }
+      - { layer_id: L-WM-CLIENT, name: 读 userRequestedOrientation（协议终点）, symbols: [WindowSessionImpl.GetRequestedOrientation] }
+    enter:
+      - id: IN-GET-ORIENT
+        meaning: 进入查询
+        regex: 'userRequestedOrientation:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.GetRequestedOrientation
+    success:
+      - id: OK-GET-ORIENT
+        meaning: 已返回用户请求方向
+        regex: 'userRequestedOrientation:\d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.GetRequestedOrientation
+    failures: []
+
+  - id: orientation_change_notify
+    title: 方向变化通知
+    api: Window.setPreferredOrientation
+    callchain:
+      - { layer_id: L-WM-CLIENT, name: 方向变化回调（协议终点）, symbols: [WindowSessionImpl] }
+    enter:
+      - id: IN-ORIENT-CHG
+        meaning: 进入方向变化成功路径
+        regex: 'OnOrientationChange is success'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl
+    success:
+      - id: OK-ORIENT-CHG
+        meaning: 方向变化已通知
+        regex: 'OnOrientationChange is success'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl
+      - id: OK-PREF-ORIENT-CHG
+        meaning: 偏好方向变化已通知
+        regex: 'OnPreferredOrientationChange is success'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl
+    failures:
+      - id: FAIL-ORIENT-DISPLAY
+        title: display 信息为空
+        kind: 依赖失败
+        when: 旋转过程取不到 display/displayInfo
+        meaning: 断在 WM
+        regex: 'display(?:Info)? is null'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl

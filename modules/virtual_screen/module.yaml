@@ -1,0 +1,214 @@
+# Watchman 虚拟屏 YAML 2.3
+# 指南模块名：虚拟屏
+# 对外接口分册：apis/虚拟屏.md
+# 四仓：
+#   应用 API → @ohos.screen（系统接口）
+#   实现 → screen_runtime（DMS tag）
+# DTS：@ohos.screen.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/screen_runtime
+# 屏幕类 success 用 DMS tag；subsystem: Display。
+schema_version: "2.3.0"
+module_id: virtual_screen
+enabled: true
+meta:
+  name: 虚拟屏
+  name_en: VirtualScreen
+  subsystem: Display
+  field_id: RF-DMS-VS
+  field_name: DMS-VirtualScreen
+  description: |
+    【做什么】系统应用创建/销毁虚拟屏、绑定 Surface、扩/镜像、查询物理屏列表，用于多屏与投屏。
+    应用走 @ohos.screen（系统接口）；实现在 screen_runtime，日志主 tag 为 DMS。
+    【典型现象】创建失败、权限/系统应用校验失败、Surface 绑定失败、销毁异常。
+    【不要分流】屏幕属性查询 → 屏幕属性；截图隐私 → 截图与隐私模式；窗口亮度常亮 → 控制亮度与常亮。
+    【怎么定位】success 卡在 L-NAPI（DMS：OnCreateVirtualScreen success / OnDestroyVirtualScreen success）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/virtual_screen
+log_blacklist:
+  - id: BL-DISPLAY
+    regex: '(?:getDefaultDisplaySync|getAllDisplays|foldStatusChange|OnGetDefaultDisplay success)'
+    flags: i
+    to_module: display
+    to_module_name: 屏幕属性
+    reason: 屏幕属性查询/监听（同属 DMS 时靠特征串区分）
+  - id: BL-SHOT
+    regex: '(?:\[screenshot\]\[(?:pick|capture)\]|setWindowPrivacyMode|pick end)'
+    flags: i
+    to_module: screenshot_privacy
+    to_module_name: 截图与隐私模式
+    reason: 截图隐私另册
+  - id: BL-BRIGHT
+    regex: '(?:setWindowBrightness|setWindowKeepScreenOn)'
+    flags: i
+    to_module: brightness
+    to_module_name: 控制亮度与常亮
+    reason: 窗亮度常亮；异源虚拟屏上常亮不生效属亮度册说明
+  - id: BL-SYSTEM-WIN
+    regex: '(?:WMSSystem|createSystemWindow)'
+    flags: i
+    to_module: system_window
+    to_module_name: 系统窗口
+    reason: 系统窗创建，不是虚拟屏
+apis:
+  external:
+    - { id: screen.getAllScreens, role: 获取全部屏幕（含物理/虚拟） }
+    - { id: screen.createVirtualScreen, role: 创建虚拟屏 }
+    - { id: screen.destroyVirtualScreen, role: 销毁虚拟屏 }
+    - { id: screen.setVirtualScreenSurface, role: 绑定虚拟屏 Surface }
+    - { id: screen.resizeVirtualScreen, role: 调整虚拟屏尺寸 }
+    - { id: screen.makeMirror, role: 镜像屏 }
+    - { id: screen.makeExpand, role: 扩展屏 }
+    - { id: screen.makeUnique, role: 独立显示 }
+    - { id: "screen.on('connect'|'disconnect'|'change')", role: 屏幕连接变化 }
+  internal:
+    - { id: JsScreenManager.OnCreateVirtualScreen, role: NAPI 创建虚拟屏 }
+    - { id: JsScreenManager.OnDestroyVirtualScreen, role: NAPI 销毁虚拟屏 }
+    - { id: JsScreenManager.OnSetVirtualScreenSurface, role: NAPI 绑定 Surface }
+    - { id: JsScreenManager.OnResizeVirtualScreen, role: NAPI 改尺寸 }
+    - { id: ScreenManager.CreateVirtualScreen, role: DMS 创建实现 }
+  dependencies:
+    - { id: DisplayManager, module: display, role: 虚拟屏依赖显示管理 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:JsScreenManager::OnCreateVirtualScreen success|JsScreenManager::OnDestroyVirtualScreen success|CreateVirtualScreen failed|DestroyVirtualScreen failed|SetVirtualScreenSurface failed|JsScreenManager::OnResizeVirtualScreen success|OnResizeVirtualScreen is called|OnResizeVirtualScreen failed|MakeExpand success|MakeExpand failed|makeUnique success|Invalid args count|Failed to get options, options is nullptr|Failed to convert parameter to screen id)
+atoms:
+  - id: create_virtual_screen
+    title: 创建虚拟屏
+    api: screen.createVirtualScreen
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 createVirtualScreen, symbols: [screen.createVirtualScreen] }
+      - { layer_id: L-NAPI, name: NAPI 创建（DMS 终点）, symbols: [JsScreenManager.OnCreateVirtualScreen] }
+    enter: []
+    success:
+      - id: OK-CREATE-VS
+        meaning: 虚拟屏创建成功
+        regex: 'JsScreenManager::OnCreateVirtualScreen success'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnCreateVirtualScreen
+    failures:
+      - id: FAIL-CREATE-VS
+        title: 创建虚拟屏失败
+        kind: 框架缺陷
+        when: CreateVirtualScreen 返回失败
+        meaning: 断在 NAPI/DMS
+        regex: 'CreateVirtualScreen failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnCreateVirtualScreen
+      - id: FAIL-CREATE-OPT
+        title: options 非法
+        kind: 应用误用
+        when: options 为空或参数不足
+        meaning: 断在 NAPI
+        regex: '(?:Failed to get options, options is nullptr|Invalid args count, need one arg at least)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnCreateVirtualScreen
+
+  - id: destroy_virtual_screen
+    title: 销毁虚拟屏
+    api: screen.destroyVirtualScreen
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 destroyVirtualScreen, symbols: [screen.destroyVirtualScreen] }
+      - { layer_id: L-NAPI, name: NAPI 销毁（DMS 终点）, symbols: [JsScreenManager.OnDestroyVirtualScreen] }
+    enter: []
+    success:
+      - id: OK-DESTROY-VS
+        meaning: 虚拟屏销毁成功
+        regex: 'JsScreenManager::OnDestroyVirtualScreen success'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnDestroyVirtualScreen
+    failures:
+      - id: FAIL-DESTROY-VS
+        title: 销毁虚拟屏失败
+        kind: 框架缺陷
+        when: DestroyVirtualScreen 失败
+        meaning: 断在 NAPI/DMS
+        regex: 'DestroyVirtualScreen failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnDestroyVirtualScreen
+      - id: FAIL-DESTROY-ARG
+        title: 参数非法
+        kind: 应用误用
+        when: 参数个数不足或 screenId 非法
+        meaning: 断在 NAPI
+        regex: '(?:Invalid args count, need one arg at least|Failed to convert parameter to screen id)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnDestroyVirtualScreen
+
+  - id: set_virtual_surface
+    title: 绑定虚拟屏 Surface
+    api: screen.setVirtualScreenSurface
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setVirtualScreenSurface, symbols: [screen.setVirtualScreenSurface] }
+      - { layer_id: L-NAPI, name: NAPI 绑定（DMS 终点）, symbols: [JsScreenManager.OnSetVirtualScreenSurface] }
+    enter: []
+    success: []
+    failures:
+      - id: FAIL-SURFACE
+        title: 绑定 Surface 失败
+        kind: 框架缺陷
+        when: SetVirtualScreenSurface failed
+        meaning: 断在 NAPI/DMS
+        regex: 'SetVirtualScreenSurface failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnSetVirtualScreenSurface
+      - id: FAIL-SURFACE-ARG
+        title: 参数个数非法
+        kind: 应用误用
+        when: 需要至少 2 个参数
+        meaning: 断在 NAPI
+        regex: 'Invalid args count, need 2 args at least'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnSetVirtualScreenSurface
+
+  - id: resize_virtual_screen
+    title: 调整虚拟屏尺寸
+    api: screen.resizeVirtualScreen
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 resizeVirtualScreen, symbols: [screen.resizeVirtualScreen] }
+      - { layer_id: L-NAPI, name: NAPI 改尺寸（DMS 终点）, symbols: [JsScreenManager.OnResizeVirtualScreen] }
+    enter:
+      - id: IN-RESIZE
+        meaning: 进入 ResizeVirtualScreen
+        regex: 'OnResizeVirtualScreen is called'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnResizeVirtualScreen
+    success:
+      - id: OK-RESIZE
+        meaning: 调整尺寸成功
+        regex: 'JsScreenManager::OnResizeVirtualScreen success'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnResizeVirtualScreen
+    failures:
+      - id: FAIL-RESIZE-ARG
+        title: 参数非法
+        kind: 应用误用
+        when: 参数不足或越界
+        meaning: 断在 NAPI
+        regex: '(?:Invalid args count, need arg at least|Failed to convert parameter|is out of range)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnResizeVirtualScreen
+      - id: FAIL-RESIZE
+        title: 调整尺寸失败
+        kind: 框架缺陷
+        when: ResizeVirtualScreen failed
+        meaning: 断在 NAPI
+        regex: 'OnResizeVirtualScreen failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsScreenManager.OnResizeVirtualScreen

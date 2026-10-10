@@ -1,0 +1,172 @@
+# Watchman 控制亮度与常亮 YAML 2.3
+# 指南模块名：控制亮度与常亮
+# 对外接口分册：apis/控制亮度与常亮.md
+# 四仓：
+#   应用 API → @ohos.window
+#   协议落地 → window_window_manager（WMSAttribute）
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/window_runtime
+# 核实：亮度/常亮主 tag 为 WMSAttribute（非独立 Brightness tag）。
+# 主诉是属性协议；success 默认 L-WM-CLIENT。
+schema_version: "2.3.0"
+module_id: brightness
+enabled: true
+meta:
+  name: 控制亮度与常亮
+  name_en: Brightness
+  subsystem: Window
+  field_id: RF-WMS-BRIGHT
+  field_name: WMS-Attribute
+  description: |
+    【做什么】设置主窗口亮度（-1 恢复系统亮度）与前台常亮。
+    应用走 @ohos.window；窗口亮度与系统屏幕亮度分开；异源虚拟屏上常亮不生效。
+    主责在 window_manager（WMSAttribute）。
+    【典型现象】亮度未变、非常亮、非应用窗不支持亮度、参数非法。
+    【不要分流】外观圆角阴影 → 控制窗口外观；虚拟屏创建 → 虚拟屏；
+    屏幕属性查询 → 屏幕属性。
+    【怎么定位】success 卡在 L-WM-CLIENT（属性写入完成，日志带 brightness / isKeepScreenOn）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/brightness
+log_blacklist:
+  - id: BL-APPEAR
+    regex: '(?:setWindowCornerRadius|setWindowShadowRadius|setWindowMask|setWindowBackgroundColor)'
+    flags: i
+    to_module: window_appearance
+    to_module_name: 控制窗口外观
+    reason: 同属 WMSAttribute 时，外观特征指向外观模块
+  - id: BL-PRIVACY
+    regex: '(?:setWindowPrivacyMode|snapshotIgnorePrivacy|PRIVACY_WINDOW)'
+    flags: i
+    to_module: screenshot_privacy
+    to_module_name: 截图与隐私模式
+    reason: 隐私模式另册
+  - id: BL-VS
+    regex: '(?:CreateVirtualScreen|destroyVirtualScreen|VirtualScreen)'
+    flags: i
+    to_module: virtual_screen
+    to_module_name: 虚拟屏
+    reason: 虚拟屏创建/销毁，不是窗亮度
+  - id: BL-DISPLAY
+    regex: '(?:getDefaultDisplaySync|getAllDisplays|foldStatusChange)'
+    flags: i
+    to_module: display
+    to_module_name: 屏幕属性
+    reason: 屏幕查询监听
+apis:
+  external:
+    - { id: Window.setWindowBrightness, role: 设置主窗口亮度；-1 恢复系统亮度 }
+    - { id: Window.setWindowKeepScreenOn, role: 前台是否保持屏幕常亮 }
+  internal:
+    - { id: JsWindow.SetWindowBrightness, role: NAPI 亮度 }
+    - { id: JsWindow.SetWindowKeepScreenOn, role: NAPI 常亮 }
+    - { id: WindowSessionImpl.SetBrightness, role: WM 写亮度属性 }
+    - { id: WindowSceneSessionImpl.SetKeepScreenOn, role: WM 写常亮属性 }
+  dependencies: []
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSAttribute|setWindowBrightness|setWindowKeepScreenOn|set brightness end|isKeepScreenOn|invalid brightness value|non app window does not support set brightness|brightness=|Mandatory parameters are left unspecified|Incorrect parameter types)
+atoms:
+  - id: set_brightness
+    title: 设置窗口亮度
+    api: Window.setWindowBrightness
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowBrightness, symbols: [Window.setWindowBrightness] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow.SetWindowBrightness] }
+      - { layer_id: L-WM-CLIENT, name: 写亮度（协议终点）, symbols: [WindowSessionImpl.SetBrightness] }
+    enter:
+      - id: IN-BRIGHT
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[setWindowBrightness\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowBrightness
+    success:
+      - id: OK-BRIGHT
+        meaning: 亮度设置结束（带 WinId/brightness/result）
+        regex: 'end\. WinId=\d+, brightness='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindow.OnSetWindowBrightness
+    failures:
+      - id: FAIL-BRIGHT-PARAM
+        title: 参数缺失或类型错误
+        kind: 应用误用
+        when: 缺参或类型不对
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowBrightness\]msg: (?:Mandatory parameters are left unspecified|Incorrect parameter types)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowBrightness
+      - id: FAIL-BRIGHT-RANGE
+        title: 亮度值非法
+        kind: 应用误用
+        when: 超出合法范围且非 -1
+        meaning: 断在 WM
+        regex: 'invalid brightness value'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetBrightness
+      - id: FAIL-BRIGHT-TYPE
+        title: 非应用窗不支持亮度
+        kind: 应用误用
+        when: 窗类型不允许
+        meaning: 断在 WM
+        regex: 'non app window does not support set brightness'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetBrightness
+      - id: FAIL-BRIGHT-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowBrightness\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowBrightness
+
+  - id: set_keep_screen_on
+    title: 设置常亮
+    api: Window.setWindowKeepScreenOn
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowKeepScreenOn, symbols: [Window.setWindowKeepScreenOn] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow.SetWindowKeepScreenOn] }
+      - { layer_id: L-WM-CLIENT, name: 写常亮（协议终点）, symbols: [WindowSceneSessionImpl.SetKeepScreenOn] }
+    enter:
+      - id: IN-KEEPON
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[setWindowKeepScreenOn\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowKeepScreenOn
+    success:
+      - id: OK-KEEPON
+        meaning: 常亮设置结束（带 isKeepScreenOn）
+        regex: 'isKeepScreenOn:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindow.OnSetWindowKeepScreenOn
+    failures:
+      - id: FAIL-KEEPON-PARAM
+        title: 参数缺失或类型错误
+        kind: 应用误用
+        when: 缺参或类型不对
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowKeepScreenOn\]msg: (?:Mandatory parameters are left unspecified|Incorrect parameter types)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowKeepScreenOn
+      - id: FAIL-KEEPON-NULL
+        title: 会话无效
+        kind: 应用误用
+        when: session invalid
+        meaning: 断在 WM
+        regex: 'session is invalid'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetKeepScreenOn

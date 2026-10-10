@@ -1,0 +1,284 @@
+# Watchman 主窗口 YAML 2.3
+# 指南模块名：主窗口
+# 对外接口分册：apis/主窗口.md
+# 四仓：
+#   应用 API → @ohos.window（WindowStage.getMainWindow / loadContent / showWindow）
+#   协议落地 → window_window_manager（WMSMain / WMSLife）
+#   SceneBoard：通用 SCBScenePanel 挂主场景，无独立「主窗口」控件；success 默认 L-WM-CLIENT
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/window_runtime
+# 主诉是获取/加载内容/Show 协议；不以通用 SCBScenePanel 当默认成功终点。
+schema_version: "2.3.0"
+module_id: main_window
+enabled: true
+meta:
+  name: 主窗口
+  name_en: MainWindow
+  subsystem: Window
+  field_id: RF-WMS-MAIN
+  field_name: WMS-Main
+  description: |
+    【做什么】UIAbility 创建时默认带主窗口；三方不自行 create 主窗，经 WindowStage 获取、
+    loadContent / setUIContent、showWindow、属性设置。WM 侧 tag：WMSMain / WMSLife。
+    【典型现象】拿不到主窗、loadContent 白屏/失败、show 无效果、主窗已销毁仍操作。
+    【不要分流】子窗口 createSubWindow；模态 TYPE_DIALOG；全局悬浮 TYPE_FLOAT；
+    闪控窗/闪控球；沉浸式系统栏；自由窗口装饰；纯生命周期监听 → 窗口生命周期。
+    【怎么定位】success 卡在 L-WM-CLIENT / L-NAPI（Get main window / load content end / show end）。
+    白屏且 WM 已成功时，再人工弱下探 SCBScenePanel，不改变本模块默认终点。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/main_window
+log_blacklist:
+  - id: BL-SUBWINDOW
+    regex: '(?:createSubWindowWithOptions|createSubWindow|Create sub window)'
+    flags: i
+    to_module: subwindow
+    to_module_name: 子窗口
+    reason: 更像子窗口
+  - id: BL-MODAL
+    regex: '(?:TYPE_DIALOG|WMSDialog|set dialog window|BindDialogTarget)'
+    flags: i
+    to_module: modal_window
+    to_module_name: 模态窗口
+    reason: 更像模态窗口
+  - id: BL-GLOBAL-FLOAT
+    regex: '(?:TYPE_FLOAT|SYSTEM_FLOAT_WINDOW|\bfloatWindow\b)'
+    flags: i
+    to_module: global_floating_window
+    to_module_name: 全局悬浮窗
+    reason: 更像全局悬浮窗
+  - id: BL-PIP
+    regex: '(?:WMSPiP|WMS_PIP|SCBPiPManager)'
+    flags: i
+    to_module: pip
+    to_module_name: 画中画
+    reason: 更像画中画
+  - id: BL-IMMS
+    regex: '(?:WMSImms|setWindowLayoutFullScreen|isImmersiveLayout)'
+    flags: i
+    to_module: immersive
+    to_module_name: 窗口沉浸式
+    reason: 更像沉浸式
+  - id: BL-FREEFORM
+    regex: '(?:setWindowDecorVisible|WMSDecor|isInFreeWindowMode|FreeMultiWindow)'
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: 更像自由窗口
+apis:
+  external:
+    - { id: WindowStage.getMainWindow, role: 获取当前 WindowStage 下主窗口 }
+    - { id: WindowStage.getMainWindowSync, role: 同步获取主窗口 }
+    - { id: WindowStage.loadContent, role: 为主窗口加载页面 }
+    - { id: Window.setUIContent, role: 按路径加载窗口内容 }
+    - { id: Window.setWindowTouchable, role: 设置是否可触 }
+    - { id: Window.showWindow, role: 显示窗口 }
+    - { id: Window.destroyWindow, role: 销毁窗口（主窗类型有限制） }
+  internal:
+    - { id: JsWindowStage.OnGetMainWindow, role: NAPI 获取主窗 }
+    - { id: JsWindowStage.OnLoadContent, role: NAPI 加载内容 }
+    - { id: JsWindow.OnShowWindow, role: NAPI 显示 }
+    - { id: WindowSceneSessionImpl.GetMainWindowWithContext, role: WM 按 context 找主窗 }
+    - { id: WindowSessionImpl.Connect, role: WM 会话 Connect }
+    - { id: WindowSessionImpl.Show, role: WM Show }
+    - { id: SCBScenePanel, role: SceneBoard 主场景容器（弱相关） }
+  dependencies:
+    - { id: AbilityRuntime.UIAbility, module: "", role: Ability 创建时默认创建主窗 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSMain|Get main window|Please create mainWindow First|Find MainWinId|Cannot find Window|load content end|Window load content failed|Init UIContent fail|already SetUIContent|SetUIContent timeout|Window Connect \[name:|connect failed|\[requestId:|show with ret=|show end|Window show failed|Destroy window|Window destroy failed|\[window\]\[(?:getMainWindow|loadContent|showWindow|destroyWindow)\])
+atoms:
+  - id: get_main_window
+    title: 获取主窗口
+    api: WindowStage.getMainWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 getMainWindow, symbols: [WindowStage.getMainWindow] }
+      - { layer_id: L-NAPI, name: NAPI 取主窗, symbols: [JsWindowStage.OnGetMainWindow] }
+      - { layer_id: L-WM-CLIENT, name: 查找主窗实例, symbols: [WindowScene.GetMainWindow, WindowSceneSessionImpl.GetMainWindowWithContext] }
+    enter:
+      - id: IN-GET-MAIN
+        meaning: 已进入 getMainWindow（失败时可见）
+        regex: '\[window\]\[getMainWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnGetMainWindow
+    success:
+      - id: OK-GET-MAIN
+        meaning: 已拿到主窗口对象
+        regex: 'Get main window \['
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnGetMainWindow
+    failures:
+      - id: FAIL-GET-STAGE
+        title: WindowStage 无效
+        kind: 应用误用
+        when: stage 未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[getMainWindow\]msg: The window stage is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnGetMainWindow
+      - id: FAIL-GET-WIN
+        title: 主窗口不存在
+        kind: 应用误用
+        when: GetMainWindow 返回空
+        meaning: 断在 NAPI
+        regex: '\[window\]\[getMainWindow\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnGetMainWindow
+      - id: FAIL-NO-MAIN
+        title: 上下文下无主窗
+        kind: 依赖失败
+        when: 尚未创建主窗
+        meaning: 断在 WM
+        regex: 'Please create mainWindow First!'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.GetMainWindowWithContext
+
+  - id: load_content
+    title: 加载页面内容
+    api: WindowStage.loadContent
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 loadContent, symbols: [WindowStage.loadContent] }
+      - { layer_id: L-NAPI, name: NAPI 转发 SetUIContent, symbols: [JsWindowStage.OnLoadContent] }
+      - { layer_id: L-WM-CLIENT, name: 初始化 UIContent, symbols: [WindowSessionImpl] }
+    enter:
+      - id: IN-LOAD
+        meaning: 已进入 loadContent（参数/窗体错误时可见）
+        regex: '\[window\]\[loadContent\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnLoadContent
+    success:
+      - id: OK-LOAD
+        meaning: 加载内容流程结束（看 ret）
+        regex: 'load content end, ret='
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.LoadContentTask
+    failures:
+      - id: FAIL-LOAD-PARAM
+        title: 页面路径参数非法
+        kind: 应用误用
+        when: contextUrl 转换失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[loadContent\]msg: Failed to convert parameter to contextUrl'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnLoadContent
+      - id: FAIL-LOAD-WIN
+        title: 主窗无效无法加载
+        kind: 应用误用
+        when: 主窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[loadContent\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnLoadContent
+      - id: FAIL-LOAD-CONTENT
+        title: 加载内容失败
+        kind: 框架缺陷
+        when: SetUIContent 返回非 OK
+        meaning: 断在 NAPI 完成回调
+        regex: '\[window\]\[loadContent\]msg: Window load content failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.LoadContentTask
+      - id: FAIL-INIT-UI
+        title: Init UIContent 失败
+        kind: 框架缺陷
+        when: WM 初始化 UI 内容失败
+        meaning: 断在 WM
+        regex: 'Init UIContent fail, ret:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl
+
+  - id: show_window
+    title: 显示主窗口
+    api: Window.showWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 showWindow, symbols: [Window.showWindow] }
+      - { layer_id: L-NAPI, name: NAPI 转发 Show, symbols: [JsWindow.OnShowWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Show / Foreground, symbols: [WindowSessionImpl.Show] }
+    enter:
+      - id: IN-SHOW
+        meaning: 已进入 Show（含 requestId）
+        regex: '\[requestId:.*\]\[scbRequestId:.*\]name:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.Show
+    success:
+      - id: OK-SHOW
+        meaning: NAPI show 完成
+        regex: 'show end, ret='
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+    failures:
+      - id: FAIL-SHOW-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWindow\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+      - id: FAIL-SHOW
+        title: Show 失败
+        kind: 框架缺陷
+        when: Show 返回非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWindow\]msg: Window show failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+
+  - id: destroy_window
+    title: 销毁窗口
+    api: Window.destroyWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 destroyWindow, symbols: [Window.destroyWindow] }
+      - { layer_id: L-NAPI, name: NAPI 销毁, symbols: [JsWindow.OnDestroyWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Destroy, symbols: [WindowSessionImpl.Destroy] }
+    enter:
+      - id: IN-DESTROY
+        meaning: 已进入销毁路径
+        regex: '\[window\]\[destroyWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow
+    success:
+      - id: OK-DESTROY
+        meaning: 销毁流程结束
+        regex: 'OnDestroyWindow end, window \['
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow
+    failures:
+      - id: FAIL-DESTROY-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗已无效
+        meaning: 断在 NAPI
+        regex: '\[window\]\[destroyWindow\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow
+      - id: FAIL-DESTROY
+        title: 销毁失败
+        kind: 框架缺陷
+        when: Destroy 返回非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[destroyWindow\]msg: Window destroy failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow

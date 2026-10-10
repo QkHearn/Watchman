@@ -1,4 +1,6 @@
-node_modules/
+.venv/
+build-py/
+dist/
 .env
 memory/misroutes/MR-*.yaml
 !memory/misroutes/.gitkeep

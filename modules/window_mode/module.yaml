@@ -1,0 +1,336 @@
+# Watchman 窗口模式 YAML 2.3
+# 指南模块名：窗口模式
+# 对外接口分册：apis/窗口模式.md
+# 四仓：
+#   应用 API → @ohos.window（getWindowStatus / maximize / minimize / recover / setSupportedWindowModes）
+#   协议落地 → window_window_manager
+#   核实 tag：maximize/minimize/recover → WMSLayoutPc / WMSPc；多窗能力 → WMSMultiWindow
+#   WMSPattern 主要为启动页/近期任务图，不作为本模块主 tag
+#   SceneBoard：分屏/模式切换产品侧弱相关；success 默认 L-NAPI / L-WM-CLIENT
+schema_version: "2.3.0"
+module_id: window_mode
+enabled: true
+meta:
+  name: 窗口模式
+  name_en: WindowMode
+  subsystem: Window
+  field_id: RF-WMS-MODE
+  field_name: WMS-MultiWindow
+  description: |
+    【做什么】窗口在屏幕上的显示状态：全屏、最大化、最小化、自由悬浮、分屏（WindowStatusType）。
+    应用走 maximize / minimize / recover / getWindowStatus / setSupportedWindowModes。
+    【典型现象】无法最大化/最小化、分屏失败、模式回调不对、支持模式设置无效。
+    【不要分流】自由窗口装饰/isInFreeWindowMode → 自由窗口；纯 move/resize → 窗口布局；
+    沉浸式全屏布局 → 窗口沉浸式。
+    【怎么定位】success 卡 Maximize id / minimize end / getWindowStatus end（L-WM-CLIENT/L-NAPI）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/window_mode
+log_blacklist:
+  - id: BL-FREEFORM
+    regex: '(?:isInFreeWindowMode|setWindowDecorVisible|WMSDecor|FreeMultiWindow|SCBPcScenePanelManager)'
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: 更像自由窗口/自由多窗
+  - id: BL-LAYOUT
+    regex: '(?:WMSLayout\b|moveWindowTo|setWindowLimits)'
+    flags: i
+    to_module: window_layout
+    to_module_name: 窗口布局
+    reason: 更像纯布局尺寸
+  - id: BL-IMMS
+    regex: '(?:WMSImms|setWindowLayoutFullScreen|fullscreen window mode not supported)'
+    flags: i
+    to_module: immersive
+    to_module_name: 窗口沉浸式
+    reason: 更像沉浸式布局
+  - id: BL-MAIN
+    regex: '(?:Get main window|load content end)'
+    flags: i
+    to_module: main_window
+    to_module_name: 主窗口
+    reason: 更像主窗口
+apis:
+  external:
+    - { id: Window.getWindowStatus, role: 获取当前窗口模式 }
+    - { id: Window.on, label: "Window.on('windowStatusChange'|'windowStatusDidChange')", role: 模式变化监听 }
+    - { id: Window.maximize, role: 进入全屏/最大化 }
+    - { id: Window.minimize, role: 最小化 }
+    - { id: Window.recover, role: 从全屏/分屏恢复 }
+    - { id: WindowStage.setSupportedWindowModes, role: 运行时修改主窗支持模式 }
+    - { id: Window.setSupportedWindowModes, role: 运行时修改主/子窗支持模式 }
+  internal:
+    - { id: JsWindow.OnMaximize, role: NAPI 最大化 }
+    - { id: JsWindow.OnMinimize, role: NAPI 最小化 }
+    - { id: JsWindow.OnRecover, role: NAPI 恢复 }
+    - { id: JsWindow.OnGetWindowStatus, role: NAPI 查询状态 }
+    - { id: WindowSceneSessionImpl.Maximize, role: WM 最大化 }
+    - { id: WindowSceneSessionImpl.Minimize, role: WM 最小化 }
+    - { id: WindowSceneSessionImpl.Recover, role: WM 恢复 }
+  dependencies:
+    - { id: freeform, module: freeform, role: PC/自由多窗下模式与自由窗能力耦合 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSMultiWindow|Maximize id:|not support floating, can not Recover|Sub window does not support split mode|mode param is only support split|minimize end|OnRecover end|Only support main or sub Window|id:\[\d+\] end|ExecuteRecover:|set window support modes succeed|set window support modes failed|windowStatus:|\[window\]\[(?:maximize|minimize|recover|getWindowStatus|setSupportedWindowModes)\])
+atoms:
+  - id: get_window_status
+    title: 获取窗口模式
+    api: Window.getWindowStatus
+    callchain:
+      - { layer_id: L-JS, name: 应用 getWindowStatus, symbols: [Window.getWindowStatus] }
+      - { layer_id: L-NAPI, name: NAPI 查询, symbols: [JsWindow.OnGetWindowStatus] }
+      - { layer_id: L-WM-CLIENT, name: WM GetWindowStatus, symbols: [Window.GetWindowStatus] }
+    enter:
+      - id: IN-STATUS
+        meaning: 已进入 getWindowStatus（失败时可见）
+        regex: '\[window\]\[getWindowStatus\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnGetWindowStatus
+    success:
+      - id: OK-STATUS
+        meaning: 已返回窗口状态
+        regex: 'id:\[\d+\] end'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnGetWindowStatus
+      - id: OK-STATUS-NOTIFY
+        meaning: WM 已通知 windowStatus/windowMode
+        regex: 'windowStatus:\d+, windowMode:\d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl
+    failures:
+      - id: FAIL-STATUS-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[getWindowStatus\]msg: Window is nullptr'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnGetWindowStatus
+      - id: FAIL-STATUS
+        title: 获取状态失败
+        kind: 框架缺陷
+        when: GetWindowStatus 非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[getWindowStatus\]msg: Failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnGetWindowStatus
+
+  - id: maximize
+    title: 最大化/全屏
+    api: Window.maximize
+    callchain:
+      - { layer_id: L-JS, name: 应用 maximize, symbols: [Window.maximize] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow.OnMaximize] }
+      - { layer_id: L-WM-CLIENT, name: WM Maximize, symbols: [WindowSceneSessionImpl.Maximize] }
+    enter:
+      - id: IN-MAX
+        meaning: 已进入 maximize（失败时可见）
+        regex: '\[window\]\[maximize\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnMaximize
+    success:
+      - id: OK-MAX
+        meaning: WM 已执行 Maximize
+        regex: 'Maximize id:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.Maximize
+    failures:
+      - id: FAIL-MAX-TYPE
+        title: 仅主窗/子窗支持
+        kind: 应用误用
+        when: 窗口类型不允许
+        meaning: 断在 NAPI
+        regex: '\[window\]\[maximize\]msg: Only support main or sub Window'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnMaximize
+      - id: FAIL-MAX-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[maximize\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnMaximize
+      - id: FAIL-MAX
+        title: 最大化失败
+        kind: 框架缺陷
+        when: Maximize 非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[maximize\]msg: Failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnMaximize
+
+  - id: minimize
+    title: 最小化
+    api: Window.minimize
+    callchain:
+      - { layer_id: L-JS, name: 应用 minimize, symbols: [Window.minimize] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow.OnMinimize] }
+      - { layer_id: L-WM-CLIENT, name: WM Minimize, symbols: [Window.Minimize] }
+    enter:
+      - id: IN-MIN
+        meaning: 已进入 minimize（失败时可见）
+        regex: '\[window\]\[minimize\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnMinimize
+    success:
+      - id: OK-MIN
+        meaning: minimize 完成
+        regex: 'minimize end, ret='
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnMinimize
+    failures:
+      - id: FAIL-MIN-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[minimize\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnMinimize
+      - id: FAIL-MIN
+        title: 最小化失败
+        kind: 框架缺陷
+        when: Minimize 非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[minimize\]msg:.*Minimize failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnMinimize
+
+  - id: recover
+    title: 恢复窗口模式
+    api: Window.recover
+    callchain:
+      - { layer_id: L-JS, name: 应用 recover, symbols: [Window.recover] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow.OnRecover] }
+      - { layer_id: L-WM-CLIENT, name: WM Recover, symbols: [WindowSceneSessionImpl] }
+    enter:
+      - id: IN-RECOVER
+        meaning: 已进入 recover（失败时可见）
+        regex: '\[window\]\[recover\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnRecover
+    success:
+      - id: OK-RECOVER
+        meaning: NAPI recover 流程结束
+        regex: 'OnRecover end, window \['
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnRecover
+    failures:
+      - id: FAIL-RECOVER-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: window 为空
+        meaning: 断在 NAPI
+        regex: '\[window\]\[recover\]msg: Window is nullptr'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnRecover
+      - id: FAIL-RECOVER-FLOAT
+        title: 不支持悬浮无法恢复
+        kind: 应用误用
+        when: 能力不支持 floating
+        meaning: 断在 WM
+        regex: 'not support floating, can not Recover'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+      - id: FAIL-RECOVER-REPEAT
+        title: 已处于恢复态
+        kind: 应用误用
+        when: 已是 MODE_RECOVER
+        meaning: 断在 WM
+        regex: 'Recover fail, already MODE_RECOVER'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+      - id: FAIL-RECOVER
+        title: 恢复失败
+        kind: 框架缺陷
+        when: recover 返回失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[recover\]msg: Failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnRecover
+
+  - id: set_supported_modes
+    title: 设置支持的窗口模式
+    api: WindowStage.setSupportedWindowModes
+    callchain:
+      - { layer_id: L-JS, name: 应用 setSupportedWindowModes, symbols: [WindowStage.setSupportedWindowModes, Window.setSupportedWindowModes] }
+      - { layer_id: L-NAPI, name: NAPI 校验参数, symbols: [JsWindowStage.OnSetSupportedWindowModes] }
+      - { layer_id: L-WM-CLIENT, name: WM 写入支持模式, symbols: [Window.SetSupportedWindowModes] }
+    enter:
+      - id: IN-SUPPORT
+        meaning: 已进入 setSupportedWindowModes
+        regex: '\[window\]\[setSupportedWindowModes\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnSetSupportedWindowModes
+    success:
+      - id: OK-SUPPORT
+        meaning: 支持模式已设置成功
+        regex: 'set window support modes succeed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnSetSupportedWindowModes
+    failures:
+      - id: FAIL-SUPPORT-SET
+        title: 设置支持模式失败
+        kind: 框架缺陷
+        when: SetSupportedWindowModes 非 OK
+        meaning: 断在 NAPI
+        regex: 'set window support modes failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnSetSupportedWindowModes
+
+      - id: FAIL-SUPPORT-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: 参数个数或类型错误
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setSupportedWindowModes\]msg: (?:The number of parameters is invalid|Failed to convert|Invalid parameters)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnSetSupportedWindowModes
+      - id: FAIL-SUPPORT-WIN
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setSupportedWindowModes\]msg: The window is not created or destoryed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.OnSetSupportedWindowModes
+      - id: FAIL-SPLIT-SUB
+        title: 子窗不支持分屏
+        kind: 应用误用
+        when: 子窗进分屏
+        meaning: 断在 WM
+        regex: 'Sub window does not support split mode'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl

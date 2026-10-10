@@ -1,0 +1,189 @@
+# Watchman 自由窗口 YAML 2.3
+# 指南模块名：自由窗口
+# 对外接口分册：apis/自由窗口.md
+# 四仓：
+#   应用 API → @ohos.window（isInFreeWindowMode / freeWindowModeChange / maximize）
+#   协议落地 → window_window_manager（WMSPc / WMSDecor；FreeMultiWindow 能力）
+#   注意：isInFreeWindowMode 的 NAPI 成功日志打在 WMSImms tag 下（源码核实）
+#   SceneBoard：feature/pcmode（SCBPcScenePanelManager 等）可弱相关
+# success：查询/装饰协议卡 L-NAPI；显示类可弱相关 pcmode TAG
+schema_version: "2.3.0"
+module_id: freeform
+enabled: true
+meta:
+  name: 自由窗口
+  name_en: Freeform
+  subsystem: Window
+  field_id: RF-WMS-PC
+  field_name: WMS-Pc
+  description: |
+    【做什么】自由大小/位置窗口；PC/2in1 默认；Phone/Pad 开自由多窗或电脑模式后进入。
+    应用查 isInFreeWindowMode、听 freeWindowModeChange、设装饰 setWindowDecorVisible；
+    模式切换接口见「窗口模式」。WM：WMSPc / WMSDecor / FreeMultiWindow。
+    【典型现象】自由窗状态不准、装饰条显隐无效、自由多窗切换异常、电脑模式布局异常。
+    【不要分流】窗口模式 maximize/minimize/分屏主诉 → 窗口模式；沉浸式系统栏 → 窗口沉浸式；
+    智慧多窗 SCBFloatManager 与 @ohos.window.floatView 闪控窗不同。
+    【怎么定位】查询/装饰 success 卡 L-NAPI（isInFreeWindowMod end / decor end）；
+    显示布局可弱下探 SCBPcScenePanelManager，不改变协议原子默认终点。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/freeform
+log_blacklist:
+  - id: BL-WINDOW-MODE
+    regex: '(?:Maximize id:|minimize end|\[window\]\[(?:maximize|minimize|recover|getWindowStatus)\])'
+    flags: i
+    to_module: window_mode
+    to_module_name: 窗口模式
+    reason: 更像窗口模式切换
+  - id: BL-IMMS
+    regex: '(?:setWindowLayoutFullScreen|isImmersiveLayout|setWindowSystemBarEnable|statusBar:)'
+    flags: i
+    to_module: immersive
+    to_module_name: 窗口沉浸式
+    reason: 更像沉浸式
+  - id: BL-LAYOUT
+    regex: '(?:WMSLayout\b|moveWindowTo|setWindowLimits)'
+    flags: i
+    to_module: window_layout
+    to_module_name: 窗口布局
+    reason: 更像纯布局
+  - id: BL-FLOAT-VIEW
+    regex: '(?:OnStartFloatView|JsFloatViewManager)'
+    flags: i
+    to_module: float_view
+    to_module_name: 闪控窗
+    reason: 更像闪控窗
+  - id: BL-GLOBAL-FLOAT
+    regex: '(?:TYPE_FLOAT CheckCallingPermission|SYSTEM_FLOAT_WINDOW)'
+    flags: i
+    to_module: global_floating_window
+    to_module_name: 全局悬浮窗
+    reason: 更像全局悬浮窗
+apis:
+  external:
+    - { id: Window.isInFreeWindowMode, role: 查询是否处于自由窗口状态 }
+    - { id: Window.on, label: "Window.on('freeWindowModeChange')", role: 监听自由窗口状态变化 }
+    - { id: Window.setWindowDecorVisible, role: 设置窗口装饰可见性 }
+    - { id: Window.getWindowDecorVisible, role: 查询装饰可见性 }
+    - { id: Window.maximize, role: 自由窗口下进入全屏/最大化（模式细节见窗口模式） }
+  internal:
+    - { id: JsWindow.OnIsInFreeWindowMode, role: NAPI 查询自由窗 }
+    - { id: JsWindow.OnSetWindowDecorVisible, role: NAPI 设装饰 }
+    - { id: Window.IsPcOrPadFreeMultiWindowMode, role: WM 自由多窗判断 }
+    - { id: Window.SetDecorVisible, role: WM 装饰显隐 }
+    - { id: SCBPcScenePanelManager, role: SceneBoard PC 场景面板（弱） }
+  dependencies:
+    - { id: Window.maximize, module: window_mode, role: 最大化/模式切换常与自由窗联用 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSPc|WMSDecor|isInFreeWindowMod|IsPcMode|FreeMultiWindow|PcOrPadFreeMultiWindow|free multi window|decorVisible:|Window decor set visible failed|OnSetWindowDecorVisible|setWindowDecorVisible|SCBPcScenePanelManager|SCBPcModeUtil|Neither is Pc nor support free multi window|\[window\]\[(?:OnIsInFreeWindowMode|setWindowDecorVisible|getWindowDecorVisible)\])
+atoms:
+  - id: query_free_window
+    title: 查询是否自由窗口
+    api: Window.isInFreeWindowMode
+    callchain:
+      - { layer_id: L-JS, name: 应用 isInFreeWindowMode, symbols: [Window.isInFreeWindowMode] }
+      - { layer_id: L-NAPI, name: NAPI 查询, symbols: [JsWindow.OnIsInFreeWindowMode] }
+      - { layer_id: L-WM-CLIENT, name: IsPcOrPadFreeMultiWindowMode, symbols: [Window.IsPcOrPadFreeMultiWindowMode] }
+    enter:
+      - id: IN-FREE-QUERY
+        meaning: 已进入查询（失败时可见）
+        regex: '\[window\]\[OnIsInFreeWindowMode\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnIsInFreeWindowMode
+    success:
+      - id: OK-FREE-QUERY
+        meaning: 已返回是否自由窗（日志原文 isInFreeWindowMod）
+        regex: 'isInFreeWindowMod \d+ end'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnIsInFreeWindowMode
+    failures:
+      - id: FAIL-FREE-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: windowToken 为空
+        meaning: 断在 NAPI
+        regex: '\[window\]\[OnIsInFreeWindowMode\]msg: invalid window'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnIsInFreeWindowMode
+
+  - id: set_decor_visible
+    title: 设置窗口装饰可见性
+    api: Window.setWindowDecorVisible
+    callchain:
+      - { layer_id: L-JS, name: 应用 setWindowDecorVisible, symbols: [Window.setWindowDecorVisible] }
+      - { layer_id: L-NAPI, name: NAPI 校验并转发, symbols: [JsWindow.OnSetWindowDecorVisible] }
+      - { layer_id: L-WM-CLIENT, name: SetDecorVisible, symbols: [Window.SetDecorVisible] }
+    enter:
+      - id: IN-DECOR
+        meaning: 已进入 setWindowDecorVisible（失败时可见）
+        regex: '\[window\]\[setWindowDecorVisible\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowDecorVisible
+    success:
+      - id: OK-DECOR
+        meaning: 装饰可见性已设置（函数名 OnSetWindowDecorVisible 出现在 hilog 前缀）
+        regex: 'OnSetWindowDecorVisible: Window \['
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowDecorVisible
+      - id: OK-DECOR-WM
+        meaning: WM 已更新 decorVisible
+        regex: 'decorVisible:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+    failures:
+      - id: FAIL-DECOR-ARGC
+        title: 参数缺失
+        kind: 应用误用
+        when: argc < 1
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowDecorVisible\]msg: Mandatory parameters are left unspecified'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowDecorVisible
+      - id: FAIL-DECOR-NULL
+        title: WindowToken 为空
+        kind: 应用误用
+        when: 窗已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowDecorVisible\]msg: WindowToken is nullptr'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowDecorVisible
+      - id: FAIL-DECOR-PARAM
+        title: isVisible 参数非法
+        kind: 应用误用
+        when: 无法转 bool
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowDecorVisible\]msg: Failed to convert parameter to isVisible'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowDecorVisible
+      - id: FAIL-DECOR-SET
+        title: 设置装饰可见性失败
+        kind: 框架缺陷
+        when: SetDecorVisible 非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowDecorVisible\]msg: Window decor set visible failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowDecorVisible
+      - id: FAIL-FREE-CAP
+        title: 非 PC 且不支持自由多窗
+        kind: 依赖失败
+        when: 设备能力不足
+        meaning: 断在 WM
+        regex: 'Neither is Pc nor support free multi window'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl

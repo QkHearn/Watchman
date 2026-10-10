@@ -1,0 +1,343 @@
+# Watchman 窗口沉浸式 YAML 2.3
+# 指南模块名：窗口沉浸式
+# 对外接口分册：apis/窗口沉浸式.md
+# 四仓：
+#   应用 API → @ohos.window（window_runtime，非独立 NAPI 包）
+#   协议落地 → window_window_manager（WMSImms）
+#   SceneBoard：无沉浸式 Panel；状态栏属性刷新为弱相关，success 不卡 L-SCB
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/window_runtime
+# 主诉是布局/系统栏协议，不是独立窗口控件；success 默认 L-WM-CLIENT。
+schema_version: "2.3.0"
+module_id: immersive
+enabled: true
+meta:
+  name: 窗口沉浸式
+  name_en: Immersive
+  subsystem: Window
+  field_id: RF-WMS-IMMS
+  field_name: WMS-Imms
+  description: |
+    【做什么】让应用可布局区域拓展至整个窗口；控制系统栏显隐/外观、避让区。
+    应用走 @ohos.window（setWindowLayoutFullScreen / setSystemBar* / getWindowAvoidArea 等）。
+    主责在 window_manager（WMSImms）；SceneBoard 无独立沉浸式控件。
+    【典型现象】内容被状态栏挡住、系统栏该隐未隐、避让区不准、自由窗下调系统栏无效。
+    【不要分流】自由窗口装饰（setWindowDecorVisible）→ 自由窗口；expandSafeArea → ArkUI；
+    ImmersiveKeyguard → 锁屏；setWindowPrivacyMode → 截图与隐私；纯 move/resize → 窗口布局。
+    【怎么定位】success 卡在 L-WM-CLIENT（属性/协议落地）。WM 已成功而状态栏 UI 未刷，
+    再人工弱下探 SceneBoard 系统栏，不改变本模块默认终点。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/immersive
+log_blacklist:
+  - id: BL-FREEFORM
+    regex: '(?:setWindowDecorVisible|WMSDecor|FreeMultiWindow|isInFreeWindowMode)'
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: 自由窗沉浸靠装饰显隐，不是本模块系统栏路径
+  - id: BL-LAYOUT
+    regex: '(?:WMSLayout\b|moveWindowTo|setWindowLimits)'
+    flags: i
+    to_module: window_layout
+    to_module_name: 窗口布局
+    reason: 改尺寸位置，不是沉浸式布局协议
+  - id: BL-PRIVACY
+    regex: '(?:setWindowPrivacyMode|screenshot|privacy mode)'
+    flags: i
+    to_module: ""
+    to_module_name: 截图与隐私模式
+    reason: 隐私模式另册
+  - id: BL-KEYGUARD
+    regex: '(?:ImmersiveKeyguard|immersivekeyguard)'
+    flags: i
+    to_module: ""
+    to_module_name: 锁屏
+    reason: 锁屏沉浸 UI，不是窗口沉浸式
+  - id: BL-PIP
+    regex: '(?:WMS_PIP|SCBPiPManager)'
+    flags: i
+    to_module: pip
+    to_module_name: 画中画
+    reason: 更像画中画
+  - id: BL-ARKUI-SAFE
+    regex: 'expandSafeArea'
+    flags: i
+    to_module: ""
+    to_module_name: ArkUI 安全区域
+    reason: 仅延伸绘制，不是 WM 沉浸式布局
+apis:
+  external:
+    - { id: Window.isImmersiveLayout, role: 是否沉浸式布局 }
+    - { id: Window.setWindowLayoutFullScreen, role: 进入/退出沉浸式布局 }
+    - { id: Window.setImmersiveModeEnabledState, role: 非自由窗口下设置沉浸式 }
+    - { id: Window.getImmersiveModeEnabledState, role: 查询沉浸式开关 }
+    - { id: Window.setWindowSystemBarEnable, role: 状态栏/导航栏可见性 }
+    - { id: Window.setSpecificSystemBarEnabled, role: 单独控制某一系统栏 }
+    - { id: Window.setWindowSystemBarProperties, role: 系统栏外观 }
+    - { id: Window.getWindowAvoidArea, role: 获取避让区 }
+    - { id: Window.on, label: "Window.on('avoidAreaChange')", role: 监听避让区变化 }
+    - { id: Window.setSystemAvoidAreaEnabled, role: 系统/悬浮/模态窗使能避让 }
+  internal:
+    - { id: JsWindow.SetWindowLayoutFullScreen, role: NAPI 全屏布局 }
+    - { id: JsWindow.SetImmersiveModeEnabledState, role: NAPI 沉浸开关 }
+    - { id: JsWindow.SetWindowSystemBarEnable, role: NAPI 系统栏显隐 }
+    - { id: JsWindow.GetWindowAvoidAreaSync, role: NAPI 避让区 }
+    - { id: WindowSceneSessionImpl.SetLayoutFullScreen, role: WM 沉浸布局 }
+    - { id: WindowSceneSessionImpl.NotifySpecificWindowSessionProperty, role: WM 系统栏属性落地 }
+    - { id: WindowSessionImpl.SetAvoidAreaOption, role: WM 避让选项 }
+  dependencies:
+    - { id: StatusBar / Navigation, module: system_window, role: 系统栏产品显示（弱相关） }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSImms|isImmersiveLayout|set end|set option|statusBar:|only main window support|system window not supported|only system window is valid|device not support|fullscreen window mode not supported|GetWindowAvoidAreaSync failed|set system bar enable failed|not allowed since invalid window type|Failed to convert parameter to enable|Argc is invalid|windowToken_ is nullptr)
+atoms:
+  - id: set_layout_fullscreen
+    title: 设置沉浸式布局
+    api: Window.setWindowLayoutFullScreen
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowLayoutFullScreen, symbols: [Window.setWindowLayoutFullScreen] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow.SetWindowLayoutFullScreen] }
+      - { layer_id: L-WM-CLIENT, name: 写布局全屏（协议终点）, symbols: [WindowSceneSessionImpl.SetLayoutFullScreen, WindowSceneSessionImpl.SetLayoutFullScreenByApiVersion] }
+    enter:
+      - id: IN-FULLSCREEN
+        meaning: NAPI 已进入 setWindowLayoutFullScreen（参数/窗体错误时可见）
+        regex: '\[window\]\[setWindowLayoutFullScreen\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowLayoutFullScreen
+    success:
+      - id: OK-FULLSCREEN
+        meaning: SetLayoutFullScreenByApiVersion 已写入 status（协议成功）
+        regex: 'win \d+ status \d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetLayoutFullScreenByApiVersion
+    failures:
+      - id: FAIL-FS-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: argc 或类型不对
+        meaning: 断在 NAPI
+        regex: '(?:Argc is invalid|Failed to convert parameter to isLayoutFullScreen)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowLayoutFullScreen
+      - id: FAIL-FS-SYSTEM
+        title: 系统窗口不支持
+        kind: 应用误用
+        when: 系统窗调沉浸布局（直接返回 OK，可能无效果）
+        meaning: 断在 WM
+        regex: 'system window not supported'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetLayoutFullScreen
+      - id: FAIL-FS-MODE
+        title: 当前窗口模式不支持全屏沉浸
+        kind: 应用误用
+        when: 窗口模式不允许
+        meaning: 断在 WM
+        regex: 'fullscreen window mode not supported'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetLayoutFullScreen
+      - id: FAIL-FS-RET
+        title: 设置全屏布局失败
+        kind: 框架缺陷
+        when: SetLayoutFullScreen 返回非 OK
+        meaning: 断在 NAPI 完成回调
+        regex: 'failed, ret \d+'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowLayoutFullScreen
+
+  - id: set_immersive_mode
+    title: 设置沉浸式开关
+    api: Window.setImmersiveModeEnabledState
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setImmersiveModeEnabledState, symbols: [Window.setImmersiveModeEnabledState] }
+      - { layer_id: L-NAPI, name: NAPI 校验与写入, symbols: [JsWindow.SetImmersiveModeEnabledState] }
+      - { layer_id: L-WM-CLIENT, name: 协议落地, symbols: [WindowSceneSessionImpl] }
+    enter:
+      - id: IN-IMMS-MODE
+        meaning: 已解析 enable 参数
+        regex: '\[window\]\[setImmersiveModeEnabledState\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetImmersiveModeEnabledState
+    success:
+      - id: OK-IMMS-MODE
+        meaning: 沉浸开关已设置完成
+        regex: 'win \d+ set end'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetImmersiveModeEnabledState
+    failures:
+      - id: FAIL-IMMS-ARGC
+        title: 参数个数非法
+        kind: 应用误用
+        when: argc != 1
+        meaning: 断在 NAPI
+        regex: 'Argc is invalid'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetImmersiveModeEnabledState
+      - id: FAIL-IMMS-TYPE
+        title: 窗口类型不允许
+        kind: 应用误用
+        when: 非主窗/子窗
+        meaning: 断在 NAPI
+        regex: 'not allowed since invalid window type'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetImmersiveModeEnabledState
+      - id: FAIL-IMMS-DEVICE
+        title: 设备走旁路（自由多窗）
+        kind: 依赖失败
+        when: PC/Pad 自由多窗改走 ignoreSafeArea
+        meaning: 未走标准沉浸协议
+        regex: 'device not support'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetImmersiveModeEnabledState
+      - id: FAIL-IMMS-NULL
+        title: 窗口已销毁
+        kind: 应用误用
+        when: windowToken 为空
+        meaning: 断在 NAPI
+        regex: 'windowToken_ is nullptr'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetImmersiveModeEnabledState
+      - id: FAIL-IMMS-PARAM
+        title: enable 参数非法
+        kind: 应用误用
+        when: 无法转成 bool
+        meaning: 断在 NAPI
+        regex: 'Failed to convert parameter to enable'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetImmersiveModeEnabledState
+
+  - id: query_immersive
+    title: 查询沉浸状态
+    api: Window.isImmersiveLayout
+    callchain:
+      - { layer_id: L-JS, name: 应用查询, symbols: [Window.isImmersiveLayout, Window.getImmersiveModeEnabledState] }
+      - { layer_id: L-NAPI, name: NAPI 查询, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: 读布局状态, symbols: [WindowSceneSessionImpl.IsImmersiveLayout] }
+    enter:
+      - id: IN-QUERY
+        meaning: 查询路径（失败时可见）
+        regex: '\[window\]\[isImmersiveLayout\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    success:
+      - id: OK-QUERY
+        meaning: 已返回是否沉浸式布局
+        regex: 'isImmersiveLayout \d+ end'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    failures:
+      - id: FAIL-QUERY-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[isImmersiveLayout\]msg:'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+
+  - id: set_system_bar
+    title: 控制系统栏
+    api: Window.setWindowSystemBarEnable
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowSystemBarEnable / setSpecificSystemBarEnabled, symbols: [Window.setWindowSystemBarEnable, Window.setSpecificSystemBarEnabled] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow.SetWindowSystemBarEnable] }
+      - { layer_id: L-WM-CLIENT, name: 系统栏属性落地（协议终点）, symbols: [WindowSceneSessionImpl.NotifySpecificWindowSessionProperty] }
+    enter: []
+    success:
+      - id: OK-BAR
+        meaning: 系统栏属性已通知会话
+        regex: 'statusBar:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.NotifySpecificWindowSessionProperty
+    failures:
+      - id: FAIL-BAR-NAPI
+        title: 设置系统栏失败
+        kind: 框架缺陷
+        when: NAPI 下发失败
+        meaning: 断在 NAPI
+        regex: 'set system bar enable failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowSystemBarEnable
+      - id: FAIL-BAR-MAIN
+        title: 仅主窗口支持
+        kind: 应用误用
+        when: 非主窗调系统栏接口
+        meaning: 断在 WM
+        regex: 'only main window support'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+
+  - id: get_avoid_area
+    title: 获取避让区
+    api: Window.getWindowAvoidArea
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 getWindowAvoidArea, symbols: [Window.getWindowAvoidArea] }
+      - { layer_id: L-NAPI, name: NAPI 同步查询, symbols: [JsWindow.GetWindowAvoidAreaSync] }
+      - { layer_id: L-WM-CLIENT, name: 计算避让区, symbols: [WindowSceneSessionImpl.GetAvoidAreaByType] }
+    enter: []
+    success:
+      - id: OK-AVOID
+        meaning: 避让区已返回（日志带 area）
+        regex: 'win \d+ type \d+ times \d+ area'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.GetAvoidAreaByType
+    failures:
+      - id: FAIL-AVOID
+        title: 获取避让区失败
+        kind: 框架缺陷
+        when: GetWindowAvoidAreaSync 失败
+        meaning: 断在 NAPI
+        regex: 'GetWindowAvoidAreaSync failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.GetWindowAvoidAreaSync
+
+  - id: set_system_avoid
+    title: 使能系统避让
+    api: Window.setSystemAvoidAreaEnabled
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setSystemAvoidAreaEnabled, symbols: [Window.setSystemAvoidAreaEnabled] }
+      - { layer_id: L-NAPI, name: NAPI 校验窗类型, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: 写避让选项（协议终点）, symbols: [WindowSessionImpl.SetAvoidAreaOption] }
+    enter: []
+    success:
+      - id: OK-SYS-AVOID
+        meaning: 避让选项已写入
+        regex: 'set option'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetAvoidAreaOption
+    failures:
+      - id: FAIL-SYS-AVOID-TYPE
+        title: 仅系统类窗口有效
+        kind: 应用误用
+        when: 非系统/悬浮/模态等允许类型
+        meaning: 断在 NAPI
+        regex: 'only system window is valid'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow

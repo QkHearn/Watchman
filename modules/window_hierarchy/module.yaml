@@ -1,0 +1,267 @@
+# Watchman 窗口层级 YAML 2.3
+# 指南模块名：窗口层级
+# 对外接口分册：apis/窗口层级.md
+# 四仓：
+#   应用 API → @ohos.window
+#   协议落地 → window_window_manager（WMSHierarchy）
+#   SceneBoard：无独立层级 Panel；success 卡 L-WM-CLIENT
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/window_runtime
+schema_version: "2.3.0"
+module_id: window_hierarchy
+enabled: true
+meta:
+  name: 窗口层级
+  name_en: WindowHierarchy
+  subsystem: Window
+  field_id: RF-WMS-HIERARCHY
+  field_name: WMS-Hierarchy
+  description: |
+    【做什么】三方应用不能直接改 ZOrder；通过 zLevel 控制同应用内非模态子窗相对层级（[-10000,10000]）。
+    应用走 @ohos.window（setSubWindowZLevel / raiseToAppTop / setRaiseByClickEnabled / setWindowTopmost 等）。
+    主责在 window_manager（WMSHierarchy）；SceneBoard 无独立层级控件。
+    【典型现象】子窗被挡住、raise 无效、zLevel 越界、非自由窗调 topmost。
+    【不要分流】焦点转移 → 窗口焦点；自由窗模式判断 → 自由窗口；布局 move/resize → 窗口布局。
+    【怎么定位】success 卡在 L-WM-CLIENT（层级属性/抬升协议落地）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/window_hierarchy
+log_blacklist:
+  - id: BL-FOCUS
+    regex: '(?:\bWMSFocus\b|shiftAppWindowFocus|setWindowFocusable)'
+    flags: i
+    to_module: window_focus
+    to_module_name: 窗口焦点
+    reason: 焦点不是层级
+  - id: BL-FREEFORM
+    regex: '(?:WMSDecor|FreeMultiWindow|isInFreeWindowMode)'
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: topmost 仅自由窗生效，模式问题先看自由窗口
+  - id: BL-LAYOUT
+    regex: '(?:\bWMSLayout\b|moveWindowTo)'
+    flags: i
+    to_module: window_layout
+    to_module_name: 窗口布局
+    reason: 布局不是层级
+  - id: BL-SUBWINDOW
+    regex: '(?:createSubWindowWithOptions|createSubWindow)'
+    flags: i
+    to_module: subwindow
+    to_module_name: 子窗口
+    reason: 子窗创建另册
+apis:
+  external:
+    - { id: Window.setSubWindowZLevel, role: 同应用内子窗口层级 }
+    - { id: Window.setRaiseByClickEnabled, role: 禁止/使能点击抬升 }
+    - { id: Window.raiseToAppTop, role: 提升子窗口到同 zLevel 顶层 }
+    - { id: Window.setWindowTopmost, role: 自由窗口下主窗口跨应用置顶 }
+    - { id: window.getLastWindow, role: 当前应用内层级最高的窗口 }
+  internal:
+    - { id: JsWindow.SetSubWindowZLevel, role: NAPI setSubWindowZLevel }
+    - { id: JsWindow.RaiseToAppTop, role: NAPI raiseToAppTop }
+    - { id: WindowSceneSessionImpl.SetSubWindowZLevel, role: WM 写 zLevel }
+    - { id: WindowSceneSessionImpl.RaiseToAppTop, role: WM 抬升 }
+    - { id: WindowSessionImpl.SetMainWindowTopmost, role: WM 主窗置顶 }
+    - { id: WindowSessionImpl.SetRaiseByClickEnabled, role: WM 点击抬升开关 }
+  dependencies:
+    - { id: isInFreeWindowMode, module: freeform, role: setWindowTopmost 仅自由窗生效 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSHierarchy|\[window\]\[setSubWindowZLevel\]|\[window\]\[raiseToAppTop\]|\[window\]\[setRaiseByClickEnabled\]|\[window\]\[setWindowTopmost\]|zLevel value \d+ exceeds valid range|must be normal app sub window|Must be app sub window|The sub window must be shown|device not support|window type is not supported|Must be app main window|Id:\d+, zLevel:\d+|isTopmost=\d+|Failed to convert paramter to zLevel|Argc is invalid|Device not support)
+atoms:
+  - id: set_sub_window_zlevel
+    title: 设置子窗口 zLevel
+    api: Window.setSubWindowZLevel
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setSubWindowZLevel, symbols: [Window.setSubWindowZLevel] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: 写 zLevel（协议终点）, symbols: [WindowSceneSessionImpl.SetSubWindowZLevel] }
+    enter:
+      - id: IN-ZLEVEL
+        meaning: NAPI 进入 setSubWindowZLevel
+        regex: '\[window\]\[setSubWindowZLevel\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    success:
+      - id: OK-ZLEVEL
+        meaning: zLevel 已可读回（设置后查询路径）
+        regex: 'Id:\d+, zLevel:\d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.GetSubWindowZLevel
+    failures:
+      - id: FAIL-ZLEVEL-ARGC
+        title: 参数非法
+        kind: 应用误用
+        when: argc 或 zLevel 类型不对
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setSubWindowZLevel\]msg: (?:Argc is invalid|Failed to convert paramter to zLevel)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+      - id: FAIL-ZLEVEL-RANGE
+        title: zLevel 越界
+        kind: 应用误用
+        when: 超出 [-10000, 10000]
+        meaning: 断在 WM
+        regex: 'zLevel value \d+ exceeds valid range'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetSubWindowZLevel
+      - id: FAIL-ZLEVEL-TYPE
+        title: 必须是普通应用子窗
+        kind: 应用误用
+        when: 非 normal sub window
+        meaning: 断在 WM
+        regex: 'must be normal app sub window'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetSubWindowZLevel
+      - id: FAIL-ZLEVEL-DEVICE
+        title: 设备不支持 zLevel
+        kind: 依赖失败
+        when: supportZLevel_ 为假
+        meaning: 断在 WM
+        regex: 'The device is not supported'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetSubWindowZLevel
+
+  - id: raise_to_app_top
+    title: 提升到应用顶层
+    api: Window.raiseToAppTop
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 raiseToAppTop, symbols: [Window.raiseToAppTop] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM RaiseToAppTop（协议终点）, symbols: [WindowSceneSessionImpl.RaiseToAppTop] }
+    enter:
+      - id: IN-RAISE
+        meaning: NAPI 进入 raiseToAppTop
+        regex: '\[window\]\[raiseToAppTop\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    success:
+      - id: OK-RAISE-LOOSENED
+        meaning: 松散多窗模式下视为已处理
+        regex: 'id: \d+ is loosened'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.RaiseToAppTop
+    failures:
+      - id: FAIL-RAISE-SEND
+        title: 发送事件失败
+        kind: 框架缺陷
+        when: napi_send_event 失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[raiseToAppTop\]msg: Failed to send event'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+      - id: FAIL-RAISE-SUB
+        title: 必须是应用子窗且已显示
+        kind: 应用误用
+        when: 非子窗或未 show
+        meaning: 断在 WM
+        regex: '(?:Must be app sub window|The sub window must be shown)'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.RaiseToAppTop
+
+  - id: set_raise_by_click
+    title: 设置点击抬升
+    api: Window.setRaiseByClickEnabled
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setRaiseByClickEnabled, symbols: [Window.setRaiseByClickEnabled] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM 写 raiseEnabled（协议终点）, symbols: [WindowSessionImpl.SetRaiseByClickEnabled] }
+    enter:
+      - id: IN-RAISE-CLICK
+        meaning: NAPI 进入 setRaiseByClickEnabled
+        regex: '\[window\]\[setRaiseByClickEnabled\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    success:
+      - id: OK-RAISE-CLICK
+        meaning: 点击抬升开关已写入路径
+        regex: 'id: \d+, enable: \d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetMainWindowRaiseByClickEnabled
+    failures:
+      - id: FAIL-RAISE-CLICK-SEND
+        title: 发送事件失败
+        kind: 框架缺陷
+        when: napi_send_event 失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setRaiseByClickEnabled\]msg: failed to send event'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+      - id: FAIL-RAISE-CLICK-SUB
+        title: 子窗条件不满足
+        kind: 应用误用
+        when: 非子窗或未显示
+        meaning: 断在 WM
+        regex: '(?:Must be app sub window!|The sub window must be shown!)'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetRaiseByClickEnabled
+
+  - id: set_window_topmost
+    title: 设置主窗置顶
+    api: Window.setWindowTopmost
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowTopmost, symbols: [Window.setWindowTopmost] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM SetMainWindowTopmost（协议终点）, symbols: [WindowSessionImpl.SetMainWindowTopmost] }
+    enter:
+      - id: IN-TOPMOST
+        meaning: NAPI 进入 setWindowTopmost
+        regex: '\[window\]\[setWindowTopmost\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    success:
+      - id: OK-TOPMOST
+        meaning: 置顶属性已写入
+        regex: 'isTopmost=\d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetMainWindowTopmost
+    failures:
+      - id: FAIL-TOPMOST-DEVICE-NAPI
+        title: 设备不支持（NAPI）
+        kind: 依赖失败
+        when: NAPI 直接拒绝
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowTopmost\]msg: Device not support'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+      - id: FAIL-TOPMOST-DEVICE
+        title: 设备不支持（非自由多窗）
+        kind: 依赖失败
+        when: 非 PC/Pad 自由多窗
+        meaning: 断在 WM
+        regex: 'device not support'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetMainWindowTopmost
+      - id: FAIL-TOPMOST-TYPE
+        title: 窗类型不支持
+        kind: 应用误用
+        when: 非主窗
+        meaning: 断在 WM
+        regex: 'window type is not supported'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetMainWindowTopmost

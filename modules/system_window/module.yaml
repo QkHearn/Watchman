@@ -1,0 +1,202 @@
+# Watchman 系统窗口 YAML 2.3
+# 指南模块名：系统窗口
+# 对外接口分册：apis/系统窗口.md
+# 四仓：
+#   应用 API → @ohos.window 系统接口（createWindow 系统类型 / showWithAnimation）
+#   协议落地 → window_window_manager（WMSSystem）
+#   显示 → window_scene_board/feature（StatusBar / Navigation / volume 等）
+# 分流不单靠共享 tag WMSSystem（与闪控窗/球/全局悬浮共用）。
+# success 可弱相关 SCB feature TAG（如 StatusBarView）。
+schema_version: "2.3.0"
+module_id: system_window
+enabled: true
+meta:
+  name: 系统窗口
+  name_en: SystemWindow
+  subsystem: Window
+  field_id: RF-WMS-SYS
+  field_name: WMS-System
+  description: |
+    【做什么】完成系统特定功能的窗口（状态栏、导航栏、音量条、壁纸、通知等）；
+    仅系统应用、Stage 模型。WM 侧 WMSSystem；产品 UI 在 SceneBoard feature/。
+    【典型现象】系统窗创建类型非法、动画接口权限、状态栏/导航栏显示异常。
+    【不要分流】全局悬浮 TYPE_FLOAT（应用悬浮）；闪控窗/闪控球；沉浸式系统栏属性
+    （→ 窗口沉浸式）；模态 TYPE_DIALOG。
+    【怎么定位】协议类 success 卡 L-WM-CLIENT（Valid type / AnimationForShown）；
+    显示类可弱命中 StatusBarView 等 SCB TAG。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/system_window
+log_blacklist:
+  - id: BL-GLOBAL-FLOAT
+    regex: '(?:TYPE_FLOAT CheckCallingPermission|SYSTEM_FLOAT_WINDOW|only TYPE_FLOAT can use interface)'
+    flags: i
+    to_module: global_floating_window
+    to_module_name: 全局悬浮窗
+    reason: 更像全局悬浮窗
+  - id: BL-FLOAT-VIEW
+    regex: '(?:OnStartFloatView|JsFloatViewManager|Create fv window|add fv controller)'
+    flags: i
+    to_module: float_view
+    to_module_name: 闪控窗
+    reason: 更像闪控窗
+  - id: BL-FLOATING-BALL
+    regex: '(?:OnStartFloatingBall|FloatingBallController|SCBFloatingBall)'
+    flags: i
+    to_module: floating_ball
+    to_module_name: 闪控球
+    reason: 更像闪控球
+  - id: BL-IMMS
+    regex: '(?:WMSImms|setWindowSystemBarEnable|setWindowLayoutFullScreen|statusBar:)'
+    flags: i
+    to_module: immersive
+    to_module_name: 窗口沉浸式
+    reason: 应用侧系统栏属性/沉浸协议，不是系统窗产品本身
+  - id: BL-MODAL
+    regex: '(?:TYPE_DIALOG|WMSDialog|set dialog window)'
+    flags: i
+    to_module: modal_window
+    to_module_name: 模态窗口
+    reason: 更像模态窗口
+apis:
+  external:
+    - { id: window.createWindow, label: "window.createWindow(系统 WindowType)", role: 创建系统窗口 }
+    - { id: Window.showWithAnimation, role: 显示并播放自定义动画 }
+    - { id: Window.hideWithAnimation, role: 隐藏并播放自定义动画 }
+  internal:
+    - { id: JsWindowManager.OnCreateWindow, role: NAPI 创建系统窗 }
+    - { id: JsWindow.CreateTransitionController, role: NAPI 转场控制器 }
+    - { id: WindowSceneSessionImpl, role: WM 系统类型校验与动画 }
+    - { id: StatusBarView, role: SceneBoard 状态栏（弱） }
+    - { id: SCBSpecificScenePanel, role: SceneBoard 系统 specific 挂载 }
+  dependencies:
+    - { id: Permission.IsSystemCalling, module: "", role: 系统应用调用约束 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:only system window can set|Invalid SCB type:|Valid type:|Invalid type:|AnimationForShown excute sucess|Unexpected window type:|not system app, permission denied|Only system windows|Permission verification failed|Window Connect \[name:|Create window failed|StatusBarBridgeView aboutToAppear|StatusBarView|SCBVirtualStatusBar|VolumeWindowController|\[window\]\[(?:createWindow|showWithAnimation|hideWithAnimation)\])
+atoms:
+  - id: create_system_window
+    title: 创建系统窗口
+    api: window.createWindow
+    callchain:
+      - { layer_id: L-JS, name: 系统应用 createWindow, symbols: [window.createWindow] }
+      - { layer_id: L-NAPI, name: NAPI 创建系统窗, symbols: [JsWindowManager.OnCreateWindow] }
+      - { layer_id: L-WM-CLIENT, name: 类型校验与 Connect, symbols: [WindowSceneSessionImpl, WindowSessionImpl.Connect] }
+    enter:
+      - id: IN-CREATE-SYS
+        meaning: 已进入 createWindow
+        regex: '\[window\]\[createWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager.OnCreateWindow
+      - id: IN-SYS-TYPE
+        meaning: WM 正在校验系统窗类型
+        regex: '(?:Valid type:|Invalid type:)'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+    success:
+      - id: OK-CREATE-SYS
+        meaning: 会话已 Connect
+        regex: 'Window Connect \[name:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.Connect
+    failures:
+      - id: FAIL-SYS-TYPE
+        title: 系统窗类型非法
+        kind: 应用误用
+        when: type 不被接受
+        meaning: 断在 WM
+        regex: 'Invalid type:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+      - id: FAIL-SYS-SCB-TYPE
+        title: SCB 系统类型非法
+        kind: 应用误用
+        when: SCB 路径类型无效
+        meaning: 断在 WM
+        regex: 'Invalid SCB type:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+      - id: FAIL-SYS-CREATE
+        title: 创建失败
+        kind: 框架缺陷
+        when: Create 失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createWindow\]msg:.*Create window failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager
+
+  - id: show_with_animation
+    title: 带动画显示系统窗
+    api: Window.showWithAnimation
+    callchain:
+      - { layer_id: L-JS, name: 应用 showWithAnimation, symbols: [Window.showWithAnimation] }
+      - { layer_id: L-NAPI, name: NAPI 权限与转场, symbols: [JsWindow.OnShowWithAnimation] }
+      - { layer_id: L-WM-CLIENT, name: AnimationForShown, symbols: [WindowSceneSessionImpl] }
+      - { layer_id: L-SCB, name: 系统控件显示（弱）, symbols: [StatusBarView] }
+    enter:
+      - id: IN-SHOW-ANIM
+        meaning: 已进入 showWithAnimation（失败时可见）
+        regex: '\[window\]\[showWithAnimation\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWithAnimation
+    success:
+      - id: OK-SHOW-ANIM
+        meaning: AnimationForShown 已执行
+        regex: 'AnimationForShown excute sucess'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+      - id: OK-SHOW-ANIM-SCB
+        meaning: StatusBar 面板已 aboutToAppear（弱相关显示终点）
+        regex: 'StatusBarBridgeView aboutToAppear end'
+        flags: i
+        layer_id: L-SCB
+        function: StatusBarBridgeView
+    failures:
+      - id: FAIL-SHOW-ANIM-PERM
+        title: 权限校验失败
+        kind: 应用误用
+        when: 非系统应用或权限不足
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWithAnimation\]msg: Permission verification failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWithAnimation
+      - id: FAIL-SHOW-ANIM-TYPE
+        title: 仅系统窗支持
+        kind: 应用误用
+        when: 非系统窗类型
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWithAnimation\]msg: Only system windows'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWithAnimation
+      - id: FAIL-SHOW-ANIM-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWithAnimation\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWithAnimation
+      - id: FAIL-SYS-ONLY
+        title: 仅系统窗可设置
+        kind: 应用误用
+        when: 非系统窗调系统接口
+        meaning: 断在 WM
+        regex: 'only system window can set'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl

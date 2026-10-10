@@ -1,0 +1,253 @@
+# Watchman 控制窗口外观 YAML 2.3
+# 指南模块名：控制窗口外观
+# 对外接口分册：apis/控制窗口外观.md
+# 四仓：
+#   应用 API → @ohos.window
+#   协议落地 → window_window_manager（WMSAttribute；掩码侧亦见 WMSPc）
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/window_runtime
+# 主诉是外观属性协议；success 默认 L-WM-CLIENT。
+schema_version: "2.3.0"
+module_id: window_appearance
+enabled: true
+meta:
+  name: 控制窗口外观
+  name_en: WindowAppearance
+  subsystem: Window
+  field_id: RF-WMS-APPEAR
+  field_name: WMS-Attribute
+  description: |
+    【做什么】设置异形掩码、阴影、圆角、内容/容器背景色。
+    应用走 @ohos.window；异形/阴影半径/圆角仅子窗与全局悬浮窗。
+    主责在 window_manager（WMSAttribute）；容器色走 WMSDecor。
+    【典型现象】圆角/阴影不生效、仅子窗/浮窗支持、背景色需 loadContent 后设置。
+    【不要分流】系统栏外观 → 窗口沉浸式；亮度/常亮 → 控制亮度与常亮；
+    自由窗装饰显隐 → 自由窗口。
+    【怎么定位】success 卡在 L-WM-CLIENT（属性写入完成）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/window_appearance
+log_blacklist:
+  - id: BL-IMMS
+    regex: '(?:WMSImms|setWindowSystemBarProperties|setWindowSystemBarEnable)'
+    flags: i
+    to_module: immersive
+    to_module_name: 窗口沉浸式
+    reason: 系统栏外观属沉浸式，不是本模块异形/阴影/圆角
+  - id: BL-BRIGHT
+    regex: '(?:setWindowBrightness|setWindowKeepScreenOn|isKeepScreenOn)'
+    flags: i
+    to_module: brightness
+    to_module_name: 控制亮度与常亮
+    reason: 亮度常亮另册（同属 WMSAttribute 时靠特征串区分）
+  - id: BL-SUB
+    regex: '(?:createSubWindowWithOptions|createSubWindow|\bWMSSub\b)'
+    flags: i
+    to_module: subwindow
+    to_module_name: 子窗口
+    reason: 建子窗，不是设外观
+  - id: BL-FREEFORM
+    regex: '(?:WMSDecor|setWindowDecorVisible)'
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: 自由窗装饰路径；容器色虽打 WMSDecor 但需叠本模块特征
+apis:
+  external:
+    - { id: Window.setWindowMask, role: 异形窗口掩码 }
+    - { id: Window.setWindowMaskWithAlpha, role: 带透明度掩码（推荐） }
+    - { id: Window.setWindowShadowRadius, role: 边缘阴影模糊半径 }
+    - { id: Window.setWindowCornerRadius, role: 圆角半径 }
+    - { id: Window.setWindowBackgroundColor, role: 内容区域背景色 }
+    - { id: Window.setWindowContainerColor, role: 窗口容器背景色 }
+    - { id: Window.setWindowContainerModalColor, role: PC/2in1 容器背景色 }
+    - { id: Window.setShadow, role: 系统接口阴影 }
+  internal:
+    - { id: JsWindow.SetWindowMask, role: NAPI 掩码 }
+    - { id: JsWindow.SetWindowCornerRadius, role: NAPI 圆角 }
+    - { id: JsWindow.SetWindowShadowRadius, role: NAPI 阴影半径 }
+    - { id: JsWindow.SetWindowBackgroundColorSync, role: NAPI 背景色 }
+    - { id: WindowSceneSessionImpl.SetWindowCornerRadius, role: WM 圆角落地 }
+    - { id: WindowSceneSessionImpl.SetWindowShadowRadius, role: WM 阴影落地 }
+    - { id: WindowSceneSessionImpl.SetWindowMask, role: WM 掩码落地 }
+  dependencies: []
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSAttribute|setWindowCornerRadius|setWindowShadowRadius|setWindowBackgroundColor|setWindowMask|setWindowContainerColor|Only subwindows and float windows|The corner radius is less than zero|The shadow radius is less than zero|set success|Set id \d+ corner radius|Set id \d+ shadow radius|win=\d+, color=)
+atoms:
+  - id: set_corner_radius
+    title: 设置圆角
+    api: Window.setWindowCornerRadius
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowCornerRadius, symbols: [Window.setWindowCornerRadius] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow.SetWindowCornerRadius] }
+      - { layer_id: L-WM-CLIENT, name: 写圆角（协议终点）, symbols: [WindowSceneSessionImpl.SetWindowCornerRadius] }
+    enter:
+      - id: IN-CORNER
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[setWindowCornerRadius\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowCornerRadius
+    success:
+      - id: OK-CORNER
+        meaning: 圆角已设置成功
+        regex: 'set success\.'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindow.OnSetWindowCornerRadius
+    failures:
+      - id: FAIL-CORNER-NEG
+        title: 圆角小于 0
+        kind: 应用误用
+        when: radius < 0
+        meaning: 断在 NAPI/WM
+        regex: 'The corner radius is less than zero'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowCornerRadius
+      - id: FAIL-CORNER-TYPE
+        title: 非子窗/浮窗
+        kind: 应用误用
+        when: 窗类型不允许
+        meaning: 断在 WM
+        regex: 'This is not sub window or float window'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetWindowCornerRadius
+      - id: FAIL-CORNER-DEV
+        title: 设备不支持
+        kind: 依赖失败
+        when: 非 PC/Pad/Phone
+        meaning: 断在 WM
+        regex: 'This is not pc, pad or phone, not supported'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetWindowCornerRadius
+
+  - id: set_shadow_radius
+    title: 设置阴影半径
+    api: Window.setWindowShadowRadius
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowShadowRadius, symbols: [Window.setWindowShadowRadius] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: 写阴影（协议终点）, symbols: [WindowSceneSessionImpl.SetWindowShadowRadius] }
+    enter:
+      - id: IN-SHADOW
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[setWindowShadowRadius\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    success:
+      - id: OK-SHADOW
+        meaning: 阴影半径已设置成功
+        regex: 'set success, radius='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindow
+    failures:
+      - id: FAIL-SHADOW-TYPE
+        title: 仅子窗/浮窗支持
+        kind: 应用误用
+        when: 窗类型不允许
+        meaning: 断在 NAPI
+        regex: 'Only subwindows and float windows are supported'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+      - id: FAIL-SHADOW-NEG
+        title: 阴影半径小于 0
+        kind: 应用误用
+        when: radius < 0
+        meaning: 断在 NAPI
+        regex: 'The shadow radius is less than zero'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+
+  - id: set_background_color
+    title: 设置背景色
+    api: Window.setWindowBackgroundColor
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowBackgroundColor, symbols: [Window.setWindowBackgroundColor] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow.SetWindowBackgroundColorSync] }
+      - { layer_id: L-WM-CLIENT, name: 写背景色（协议终点）, symbols: [Window] }
+    enter:
+      - id: IN-BG
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[setWindowBackgroundColor\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowBackgroundColorSync
+    success:
+      - id: OK-BG
+        meaning: 背景色已写入（带 win/color）
+        regex: 'win=\d+, color='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindow.OnSetWindowBackgroundColorSync
+    failures:
+      - id: FAIL-BG-PARAM
+        title: 参数缺失或类型错误
+        kind: 应用误用
+        when: 缺参或类型不对
+        meaning: 断在 NAPI
+        regex: '(?:Mandatory parameters are left unspecified|Incorrect parameter types)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowBackgroundColorSync
+      - id: FAIL-BG-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowBackgroundColor\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowBackgroundColorSync
+
+  - id: set_window_mask
+    title: 设置异形掩码
+    api: Window.setWindowMask
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowMask, symbols: [Window.setWindowMask] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow.SetWindowMask] }
+      - { layer_id: L-WM-CLIENT, name: 写掩码（协议终点）, symbols: [WindowSceneSessionImpl.SetWindowMask] }
+    enter:
+      - id: IN-MASK
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[setWindowMask\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowMask
+    success:
+      - id: OK-MASK
+        meaning: 掩码设置完成
+        regex: 'OnSetWindowMask.*end'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindow.OnSetWindowMask
+    failures:
+      - id: FAIL-MASK-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: 缺参或类型不对
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowMask\]msg: (?:Mandatory parameters|Incorrect parameter types)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowMask
+      - id: FAIL-MASK-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowMask\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowMask

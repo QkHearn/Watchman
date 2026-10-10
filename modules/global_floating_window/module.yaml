@@ -1,0 +1,223 @@
+# Watchman 全局悬浮窗 YAML 2.3
+# 指南模块名：全局悬浮窗
+# 对外接口分册：apis/全局悬浮窗.md
+# 四仓：
+#   应用 API → @ohos.window（createWindow + WindowType.TYPE_FLOAT）
+#   协议落地 → window_window_manager（共享 WMSSystem；须叠 float/TYPE_FLOAT 特征）
+#   显示 → SceneBoard SpecificSession / TYPE_FLOAT 挂载（onCreateSpecificSession）
+# 注意：勿与 float_view（闪控窗）/ floating_ball（闪控球）混淆；勿单靠 WMSSystem。
+# 显示优先：show 的 success 卡 L-SCB；WM Create/Show 只作进度。
+schema_version: "2.3.0"
+module_id: global_floating_window
+enabled: true
+meta:
+  name: 全局悬浮窗
+  name_en: GlobalFloatingWindow
+  subsystem: Window
+  field_id: RF-WMS-GFLOAT
+  field_name: WMS-GlobalFloat
+  description: |
+    【做什么】应用辅助窗口，类型 WindowType.TYPE_FLOAT；主窗退后台后仍可前台显示。
+    创建前需 ohos.permission.SYSTEM_FLOAT_WINDOW。WM tag 常为共享 WMSSystem，
+    分流必须叠 TYPE_FLOAT / SYSTEM_FLOAT_WINDOW / float window 特征。
+    【典型现象】主诉多为显示：悬浮窗没出来、层级不对；少数：权限失败、创建失败。
+    【不要分流】闪控窗 floatView / 闪控球 floatingBall / 子窗口 / 模态 TYPE_DIALOG /
+    系统状态栏等系统窗 / 智慧多窗 SCBFloatManager。
+    【怎么定位·显示优先】不以 WM show end 当显示成功；success 卡 L-SCB onCreateSpecificSession。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/global_floating_window
+log_blacklist:
+  - id: BL-FLOAT-VIEW
+    regex: '(?:OnStartFloatView|JsFloatViewManager|Create fv window|START_FLOAT_VIEW|add fv controller)'
+    flags: i
+    to_module: float_view
+    to_module_name: 闪控窗
+    reason: 更像闪控窗；勿用 isFloatView（智慧多窗）
+  - id: BL-FLOATING-BALL
+    regex: '(?:OnStartFloatingBall|FloatingBallController|SCBFloatingBall|Create floating ball|RES_TYPE_FLOATING_BALL)'
+    flags: i
+    to_module: floating_ball
+    to_module_name: 闪控球
+    reason: 更像闪控球
+  - id: BL-SUBWINDOW
+    regex: '(?:createSubWindowWithOptions|createSubWindow|Create sub window)'
+    flags: i
+    to_module: subwindow
+    to_module_name: 子窗口
+    reason: 更像子窗口
+  - id: BL-MODAL
+    regex: '(?:TYPE_DIALOG|WMSDialog|set dialog window)'
+    flags: i
+    to_module: modal_window
+    to_module_name: 模态窗口
+    reason: 更像模态窗口
+  - id: BL-SYSTEM
+    regex: '(?:only system window can set|Invalid SCB type|StatusBarView|AnimationForShown)'
+    flags: i
+    to_module: system_window
+    to_module_name: 系统窗口
+    reason: 更像系统窗口（状态栏等）
+  - id: BL-FREEFORM-FLOAT
+    regex: '(?:SCBFloatManager|resetFloatViewWithFold)'
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: 智慧多窗悬浮，不是 TYPE_FLOAT 全局悬浮窗
+apis:
+  external:
+    - { id: window.createWindow, label: "window.createWindow(TYPE_FLOAT)", role: 创建全局悬浮窗 }
+    - { id: Window.setUIContent, role: 加载页面 }
+    - { id: Window.showWindow, role: 显示 }
+    - { id: Window.destroyWindow, role: 销毁 }
+  internal:
+    - { id: JsWindowManager.OnCreateWindow, role: NAPI 创建与权限校验 }
+    - { id: Window.Create, role: WM 创建实例 }
+    - { id: WindowSessionImpl.Show, role: WM Show（进度） }
+    - { id: SCBSpecificSession.onCreateSpecificSession, role: SceneBoard 挂载（显示终点） }
+    - { id: SCBSpecificScenePanel, role: SceneBoard 通用系统/悬浮挂载容器 }
+  dependencies:
+    - { id: ohos.permission.SYSTEM_FLOAT_WINDOW, module: "", role: 创建 TYPE_FLOAT 必选权限 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:TYPE_FLOAT CheckCallingPermission|SYSTEM_FLOAT_WINDOW|only TYPE_FLOAT can use interface|check float permission (?:success|failed)|SupportCreateFloatWindow|exist ancestor float window|RES_TYPE_FLOATING_WINDOW_V1|float window use hide|Set float window is anco|Window Connect \[name:|Create window failed|show end|Window show failed|Window destroy failed|onCreateSpecificSession|SCBSpecificScenePanel|\[window\]\[(?:createWindow|showWindow|destroyWindow)\])
+atoms:
+  - id: create_float
+    title: 创建全局悬浮窗
+    api: window.createWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用 createWindow(TYPE_FLOAT), symbols: [window.createWindow] }
+      - { layer_id: L-NAPI, name: NAPI 权限校验与创建, symbols: [JsWindowManager.OnCreateWindow] }
+      - { layer_id: L-WM-CLIENT, name: Window::Create / Connect, symbols: [Window.Create, WindowSessionImpl.Connect] }
+    enter:
+      - id: IN-CREATE-FLOAT
+        meaning: 已进入 createWindow
+        regex: '\[window\]\[createWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager.OnCreateWindow
+      - id: IN-FLOAT-PERM-OK
+        meaning: 服务端 float 权限校验通过（进度）
+        regex: 'check float permission success'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: SceneSessionManager
+    success:
+      - id: OK-CREATE-FLOAT
+        meaning: 会话已 Connect（实例就绪，显示仍看 show/SCB）
+        regex: 'Window Connect \[name:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.Connect
+    failures:
+      - id: FAIL-FLOAT-PERM
+        title: 缺少 SYSTEM_FLOAT_WINDOW 权限
+        kind: 应用误用
+        when: NAPI 或服务端权限校验失败
+        meaning: 断在 NAPI/WM
+        regex: '(?:TYPE_FLOAT CheckCallingPermission failed|check float permission failed)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager
+      - id: FAIL-FLOAT-PARAM
+        title: 创建参数非法
+        kind: 应用误用
+        when: 配置解析失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createWindow\]msg: (?:Failed to parse config|Mandatory parameters are left unspecified|Incorrect number of parameters)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager.OnCreateWindow
+      - id: FAIL-FLOAT-CREATE
+        title: 创建失败
+        kind: 框架缺陷
+        when: Window::Create 失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createWindow\]msg:.*Create window failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager
+
+  - id: show_float
+    title: 显示全局悬浮窗
+    api: Window.showWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用 showWindow, symbols: [Window.showWindow] }
+      - { layer_id: L-NAPI, name: NAPI Show, symbols: [JsWindow.OnShowWindow] }
+      - { layer_id: L-WM-SESSION, name: WM Show 进度, symbols: [WindowSessionImpl.Show] }
+      - { layer_id: L-SCB, name: SceneBoard 挂载（显示终点）, symbols: [SCBSpecificSession.onCreateSpecificSession] }
+    enter:
+      - id: IN-SHOW-FLOAT-NAPI
+        meaning: NAPI show 结束（进度，非显示成功）
+        regex: 'show end, ret='
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+      - id: IN-SHOW-FLOAT-WM
+        meaning: WM 已进入 Show
+        regex: '\[requestId:.*\]\[scbRequestId:.*\]name:'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: WindowSessionImpl.Show
+    success:
+      - id: OK-SHOW-FLOAT-SCB
+        meaning: SceneBoard 已收到/挂载 specific session（显示侧弱终点）
+        regex: 'onCreateSpecificSession'
+        flags: i
+        layer_id: L-SCB
+        function: SCBSpecificSession.onCreateSpecificSession
+    failures:
+      - id: FAIL-SHOW-FLOAT
+        title: Show 失败
+        kind: 框架缺陷
+        when: Show 非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWindow\]msg: Window show failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+      - id: FAIL-FLOAT-TYPE
+        title: 非 TYPE_FLOAT 误用接口
+        kind: 应用误用
+        when: 非悬浮类型调专用接口
+        meaning: 断在 WM
+        regex: 'only TYPE_FLOAT can use interface'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+
+  - id: destroy_float
+    title: 销毁全局悬浮窗
+    api: Window.destroyWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用 destroyWindow, symbols: [Window.destroyWindow] }
+      - { layer_id: L-NAPI, name: NAPI 销毁, symbols: [JsWindow.OnDestroyWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Destroy, symbols: [WindowSessionImpl.Destroy] }
+    enter:
+      - id: IN-DESTROY-FLOAT
+        meaning: 已进入销毁
+        regex: '\[window\]\[destroyWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow
+    success:
+      - id: OK-DESTROY-FLOAT
+        meaning: 销毁完成
+        regex: 'OnDestroyWindow end, window \['
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow
+    failures:
+      - id: FAIL-DESTROY-FLOAT
+        title: 销毁失败
+        kind: 框架缺陷
+        when: Destroy 非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[destroyWindow\]msg: Window destroy failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow

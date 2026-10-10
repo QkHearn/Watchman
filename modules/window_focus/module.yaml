@@ -1,0 +1,256 @@
+# Watchman 窗口焦点 YAML 2.3
+# 指南模块名：窗口焦点
+# 对外接口分册：apis/窗口焦点.md
+# 四仓：
+#   应用 API → @ohos.window
+#   协议落地 → window_window_manager（WMSFocus）
+#   SceneBoard：无独立焦点 Panel；success 卡 L-WM-CLIENT
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/window_runtime
+schema_version: "2.3.0"
+module_id: window_focus
+enabled: true
+meta:
+  name: 窗口焦点
+  name_en: WindowFocus
+  subsystem: Window
+  field_id: RF-WMS-FOCUS
+  field_name: WMS-Focus
+  description: |
+    【做什么】屏幕组内唯一焦点窗接收键盘事件；激活态（高亮）与焦点不是同一概念。
+    应用走 @ohos.window（setWindowFocusable / shiftAppWindowFocus / setExclusivelyHighlighted 等）。
+    主责在 window_manager（WMSFocus）；SceneBoard 无独立焦点控件。
+    【典型现象】该获焦未获焦、同应用转移焦点失败、focusable 设置无效、高亮与焦点混淆。
+    【不要分流】窗口生命周期 show/destroy → 窗口生命周期；层级 raise → 窗口层级；
+    多模输入过滤 → 使用WindowManager管理多模输入事件。
+    【怎么定位】success 卡在 L-WM-CLIENT（焦点属性/转移协议落地）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/window_focus
+log_blacklist:
+  - id: BL-LIFE
+    regex: '(?:\bWMSLife\b|Window show success|\[window\]\[loadContent\])'
+    flags: i
+    to_module: window_lifecycle
+    to_module_name: 窗口生命周期
+    reason: 更像生命周期
+  - id: BL-HIERARCHY
+    regex: '(?:\bWMSHierarchy\b|setSubWindowZLevel|raiseToAppTop)'
+    flags: i
+    to_module: window_hierarchy
+    to_module_name: 窗口层级
+    reason: 层级抬升不是焦点
+  - id: BL-EVENT
+    regex: '(?:\bWMSEvent\b|RegisterKeyEventFilter|InjectTouchEvent)'
+    flags: i
+    to_module: window_event
+    to_module_name: 使用WindowManager管理多模输入事件
+    reason: 输入过滤/注入另册
+  - id: BL-LAYOUT
+    regex: '(?:\bWMSLayout\b|moveWindowTo)'
+    flags: i
+    to_module: window_layout
+    to_module_name: 窗口布局
+    reason: 布局不是焦点
+apis:
+  external:
+    - { id: Window.on, label: "Window.on('windowEvent')", role: 监听焦点等窗口事件 }
+    - { id: Window.on, label: "Window.on('windowHighlightChange')", role: 监听激活态变化 }
+    - { id: Window.setWindowFocusable, role: 是否参与焦点竞争 }
+    - { id: window.shiftAppWindowFocus, role: 同应用内转移焦点 }
+    - { id: Window.isFocused, role: 是否获焦 }
+    - { id: Window.setExclusivelyHighlighted, role: 是否独占激活 }
+    - { id: Window.isWindowHighlighted, role: 是否激活态 }
+    - { id: Window.showWindow, label: "Window.showWindow(options)", role: focusOnShow:false 时显示不获焦 }
+  internal:
+    - { id: JsWindow.SetWindowFocusable, role: NAPI setWindowFocusable }
+    - { id: JsWindowManager.ShiftAppWindowFocus, role: NAPI shiftAppWindowFocus }
+    - { id: WindowSessionImpl.SetFocusable, role: WM 写 focusable }
+    - { id: WindowSessionImpl.UpdateFocusState, role: WM 焦点状态落地 }
+    - { id: SceneSessionManager.ShiftAppWindowFocus, role: 服务端转移焦点 }
+  dependencies: []
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSFocus|\[window\]\[setWindowFocusable\]|\[window\]\[shiftAppWindowFocus\]|\[window\]\[setExclusivelyHighlighted\]|\[window\]\[isFocused\]|set focusable:|unsupport window|already exclusivelyHighlighted|from id:|source session need be focused|target session has been focused|verify bundle failed|focus: \d+, id:|OnShiftAppWindowFocus success|Failed to convert parameter to (?:focusable|source window Id|target window Id|exclusivelyHighlighted))
+atoms:
+  - id: set_window_focusable
+    title: 设置可获焦
+    api: Window.setWindowFocusable
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowFocusable, symbols: [Window.setWindowFocusable] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow.OnSetWindowFocusable] }
+      - { layer_id: L-WM-CLIENT, name: 写 focusable（协议终点）, symbols: [WindowSessionImpl.SetFocusable] }
+    enter:
+      - id: IN-FOCUSABLE
+        meaning: NAPI 进入 setWindowFocusable
+        regex: '\[window\]\[setWindowFocusable\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowFocusable
+    success:
+      - id: OK-FOCUSABLE
+        meaning: focusable 已写入
+        regex: 'set focusable: windowId='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetFocusable
+    failures:
+      - id: FAIL-FOCUSABLE-ARGC
+        title: 参数个数非法
+        kind: 应用误用
+        when: argc < 1
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowFocusable\]msg: Argc is invalid'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowFocusable
+      - id: FAIL-FOCUSABLE-PARAM
+        title: focusable 参数非法
+        kind: 应用误用
+        when: 无法转成 bool
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowFocusable\]msg: Failed to convert parameter to focusable'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowFocusable
+
+  - id: shift_app_window_focus
+    title: 同应用转移焦点
+    api: window.shiftAppWindowFocus
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 shiftAppWindowFocus, symbols: [window.shiftAppWindowFocus] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindowManager.OnShiftAppWindowFocus] }
+      - { layer_id: L-WM-CLIENT, name: 服务端转移焦点（协议终点）, symbols: [SceneSessionManager.ShiftAppWindowFocus] }
+    enter:
+      - id: IN-SHIFT
+        meaning: NAPI 进入转移焦点
+        regex: '\[window\]\[shiftAppWindowFocus\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager.OnShiftAppWindowFocus
+      - id: IN-SHIFT-WM
+        meaning: 服务端收到 from/to
+        regex: 'from id: \d+ to id: \d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: SceneSessionManager.ShiftAppWindowFocus
+    success:
+      - id: OK-SHIFT
+        meaning: NAPI 转移成功
+        regex: 'OnShiftAppWindowFocus success'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager.OnShiftAppWindowFocus
+    failures:
+      - id: FAIL-SHIFT-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: 源/目标 id 解析失败
+        meaning: 断在 NAPI
+        regex: 'Failed to convert parameter to (?:source window Id|target window Id)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager.OnShiftAppWindowFocus
+      - id: FAIL-SHIFT-SOURCE
+        title: 源窗未获焦
+        kind: 应用误用
+        when: source 不是当前焦点
+        meaning: 断在服务端
+        regex: 'source session need be focused'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: SceneSessionManager.ShiftAppWindowFocus
+      - id: FAIL-SHIFT-BUNDLE
+        title: 跨应用禁止
+        kind: 应用误用
+        when: 源/目标 bundle 不一致
+        meaning: 断在服务端
+        regex: 'verify bundle failed'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: SceneSessionManager.ShiftAppWindowFocus
+
+  - id: set_exclusively_highlighted
+    title: 设置独占激活
+    api: Window.setExclusivelyHighlighted
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setExclusivelyHighlighted, symbols: [Window.setExclusivelyHighlighted] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: 写独占高亮（协议终点）, symbols: [WindowSessionImpl.SetExclusivelyHighlighted] }
+    enter:
+      - id: IN-HIGHLIGHT
+        meaning: NAPI 进入 setExclusivelyHighlighted
+        regex: '\[window\]\[setExclusivelyHighlighted\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    success:
+      - id: OK-HIGHLIGHT
+        meaning: 独占高亮已设置（含已是该状态）
+        regex: '(?:isExclusivelyHighlighted: \d+|already exclusivelyHighlighted)'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetExclusivelyHighlighted
+    failures:
+      - id: FAIL-HIGHLIGHT-ARGC
+        title: 参数非法
+        kind: 应用误用
+        when: argc 或类型不对
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setExclusivelyHighlighted\]msg: (?:Argc is invalid|Failed to convert parameter to exclusivelyHighlighted)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+      - id: FAIL-HIGHLIGHT-TYPE
+        title: 窗类型不支持
+        kind: 应用误用
+        when: 主窗/对话框/模态窗
+        meaning: 断在 WM
+        regex: 'unsupport window'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.SetExclusivelyHighlighted
+
+  - id: focus_state_update
+    title: 焦点状态更新
+    api: Window.on
+    callchain:
+      - { layer_id: L-JS, name: 应用监听 windowEvent / 查询 isFocused, symbols: [Window.on, Window.isFocused] }
+      - { layer_id: L-WM-CLIENT, name: 焦点状态落地（协议终点）, symbols: [WindowSessionImpl.UpdateFocusState] }
+    enter:
+      - id: IN-FOCUS-STATE
+        meaning: 焦点通知进入处理
+        regex: 'unfocusId:\d+, focusId:\d+, isFocused:\d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.ProcessUpdateFocus
+    success:
+      - id: OK-FOCUS-STATE
+        meaning: 焦点状态已更新
+        regex: 'focus: \d+, id: \d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.UpdateFocusState
+    failures:
+      - id: FAIL-FOCUS-OUTDATED
+        title: 过期焦点通知被跳过
+        kind: 依赖失败
+        when: 时间戳过期
+        meaning: 断在 WM 通知路径
+        regex: 'skip outdated focus notify'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.ProcessUpdateFocus
+      - id: FAIL-FOCUS-INVALID
+        title: 会话无效
+        kind: 应用误用
+        when: 查 isFocused 时窗无效
+        meaning: 断在 WM
+        regex: 'Session is invalid'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.IsFocused

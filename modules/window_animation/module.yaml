@@ -1,0 +1,245 @@
+# Watchman 设置窗口动效 YAML 2.3
+# 指南模块名：设置窗口动效
+# 对外接口分册：apis/设置窗口动效.md
+# 四仓：
+#   应用 API → @ohos.window / @ohos.animation.windowAnimationManager（系统）
+#   协议落地 → window_window_manager（WMSAnimation）
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts、@ohos.animation.windowAnimationManager.d.ts
+# NAPI：window_runtime（window）；window_animation
+# 主诉是转场/显隐动画协议；success 默认 L-WM-CLIENT。
+schema_version: "2.3.0"
+module_id: window_animation
+enabled: true
+meta:
+  name: 设置窗口动效
+  name_en: WindowAnimation
+  subsystem: Window
+  field_id: RF-WMS-ANIM
+  field_name: WMS-Animation
+  description: |
+    【做什么】配置系统窗口显隐动画、启动 Ability 淡入淡出、主窗口转场（当前可配销毁转场）。
+    应用走 @ohos.window（showWithAnimation / setWindowTransitionAnimation 等）。
+    主责在 window_manager（WMSAnimation）；SceneBoard 收 updateTransitionAnimation 通知。
+    【典型现象】转场未生效、仅系统窗可带动效显隐、设备/窗类型不支持转场配置。
+    【不要分流】自由窗口装饰动效 → 自由窗口；窗口生命周期 show/hide 无动画 → 窗口生命周期；
+    启动页过渡 → 应用启动页。
+    【怎么定位】success 卡在 L-WM-CLIENT（转场协议落地 / 带动效 show 完成）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/window_animation
+log_blacklist:
+  - id: BL-LIFE
+    regex: '(?:WMSLife\b|loadContent|setUIContent)'
+    flags: i
+    to_module: window_lifecycle
+    to_module_name: 窗口生命周期
+    reason: 更像生命周期而非动效
+  - id: BL-STARTUP
+    regex: '(?:WMSStartupPage|removeStartingWindow|startWindowIcon)'
+    flags: i
+    to_module: launch_page
+    to_module_name: 应用启动页
+    reason: 启动页资源/移除，不是转场配置
+  - id: BL-FREEFORM
+    regex: '(?:WMSDecor|setWindowDecorVisible|FreeMultiWindow)'
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: 自由窗装饰路径
+  - id: BL-ATTR
+    regex: '(?:WMSAttribute|setWindowCornerRadius|setWindowShadowRadius)'
+    flags: i
+    to_module: window_appearance
+    to_module_name: 控制窗口外观
+    reason: 外观属性，不是动效
+apis:
+  external:
+    - { id: Window.showWithAnimation, role: 显示系统窗口并播动画（系统接口） }
+    - { id: Window.hideWithAnimation, role: 隐藏系统窗口并播动画（系统接口） }
+    - { id: Window.setWindowTransitionAnimation, role: 配置主窗口转场动画 }
+    - { id: Window.getWindowTransitionAnimation, role: 获取主窗口转场动画配置 }
+    - { id: AnimationType.FADE_IN_OUT, role: 启动 Ability 淡入淡出类型 }
+  internal:
+    - { id: JsWindow.ShowWithAnimation, role: NAPI 带动效显示 }
+    - { id: JsWindow.HideWithAnimation, role: NAPI 带动效隐藏 }
+    - { id: JsWindow.SetWindowTransitionAnimation, role: NAPI 转场配置 }
+    - { id: WindowSceneSessionImpl.SetWindowTransitionAnimation, role: WM 写转场配置 }
+    - { id: WindowSceneSessionImpl.IsTransitionAnimationSupported, role: WM 校验设备/窗类型 }
+    - { id: SceneSession.SetWindowTransitionAnimation, role: Session 落转场 }
+  dependencies:
+    - { id: SCBSceneSession.onUpdateTransitionAnimation, module: "", role: SceneBoard 收转场通知（弱） }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSAnimation|setWindowTransitionAnimation|showWithAnimation|hideWithAnimation|onUpdateTransitionAnimation|Device is invalid|Window type is invalid|Not pc or pad device|Scene session is not main window|Transition animation is not enable|Failed to convert parameter to type|Failed to convert parameter to animation|Set window transition animation failed|Only system windows|OnShowWithAnimation|OnHideWithAnimation|end, ret=)
+atoms:
+  - id: set_transition_animation
+    title: 设置转场动画
+    api: Window.setWindowTransitionAnimation
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowTransitionAnimation, symbols: [Window.setWindowTransitionAnimation] }
+      - { layer_id: L-NAPI, name: NAPI 校验与转发, symbols: [JsWindow.SetWindowTransitionAnimation] }
+      - { layer_id: L-WM-CLIENT, name: 写转场配置（协议终点）, symbols: [WindowSceneSessionImpl.SetWindowTransitionAnimation, SceneSession.SetWindowTransitionAnimation] }
+    enter:
+      - id: IN-TRANS
+        meaning: NAPI 已进入 setWindowTransitionAnimation（参数/窗体错误时可见）
+        regex: '\[window\]\[setWindowTransitionAnimation\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowTransitionAnimation
+    success:
+      - id: OK-TRANS
+        meaning: 转场配置已通知到会话侧（协议成功）
+        regex: 'onUpdateTransitionAnimation type:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetWindowTransitionAnimation
+    failures:
+      - id: FAIL-TRANS-ARGC
+        title: 参数个数非法
+        kind: 应用误用
+        when: argc != 2
+        meaning: 断在 NAPI
+        regex: 'Incorrect number of parameters\. Expected 2'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowTransitionAnimation
+      - id: FAIL-TRANS-TYPE
+        title: type 参数非法
+        kind: 应用误用
+        when: 无法转为合法 TransitionType
+        meaning: 断在 NAPI
+        regex: 'Failed to convert parameter to type'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowTransitionAnimation
+      - id: FAIL-TRANS-ANIM
+        title: animation 参数非法
+        kind: 应用误用
+        when: 无法转为 TransitionAnimation
+        meaning: 断在 NAPI
+        regex: 'Failed to convert parameter to animation'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowTransitionAnimation
+      - id: FAIL-TRANS-DEVICE
+        title: 设备不支持转场配置
+        kind: 应用误用
+        when: 非 PC/Pad 自由多窗等
+        meaning: 断在 WM
+        regex: '(?:Device is invalid|Not pc or pad device)'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.IsTransitionAnimationSupported
+      - id: FAIL-TRANS-WINTYPE
+        title: 窗口类型不支持
+        kind: 应用误用
+        when: 非主窗口
+        meaning: 断在 WM
+        regex: '(?:Window type is invalid|Scene session is not main window)'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.IsTransitionAnimationSupported
+      - id: FAIL-TRANS-SET
+        title: 设置转场失败
+        kind: 框架缺陷
+        when: SetWindowTransitionAnimation 返回非 OK
+        meaning: 断在 NAPI/WM
+        regex: 'Set window transition animation failed|set failed, ret is'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.SetWindowTransitionAnimation
+
+  - id: show_with_animation
+    title: 带动效显示系统窗
+    api: Window.showWithAnimation
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 showWithAnimation, symbols: [Window.showWithAnimation] }
+      - { layer_id: L-NAPI, name: NAPI 校验系统窗, symbols: [JsWindow.ShowWithAnimation] }
+      - { layer_id: L-WM-CLIENT, name: Show 协议终点, symbols: [Window.Show] }
+    enter:
+      - id: IN-SHOW-ANIM
+        meaning: NAPI 已进入 showWithAnimation（错误时可见）
+        regex: '\[window\]\[showWithAnimation\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.ShowWithAnimation
+    success:
+      - id: OK-SHOW-ANIM
+        meaning: 带动效 show 已结束（带 ret）
+        regex: 'OnShowWithAnimation.*end, ret='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindow.OnShowWithAnimation
+    failures:
+      - id: FAIL-SHOW-TYPE
+        title: 非系统类窗口
+        kind: 应用误用
+        when: 窗类型不支持
+        meaning: 断在 NAPI
+        regex: 'Only system windows'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.ShowWithAnimation
+      - id: FAIL-SHOW-PERM
+        title: 非系统应用调用系统接口
+        kind: 应用误用
+        when: 权限校验失败
+        meaning: 断在 NAPI
+        regex: 'A non-system application calls a system API'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.ShowWithAnimation
+      - id: FAIL-SHOW-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWithAnimation\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.ShowWithAnimation
+
+  - id: hide_with_animation
+    title: 带动效隐藏系统窗
+    api: Window.hideWithAnimation
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 hideWithAnimation, symbols: [Window.hideWithAnimation] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow.HideWithAnimation] }
+      - { layer_id: L-WM-CLIENT, name: Hide 协议终点, symbols: [Window] }
+    enter:
+      - id: IN-HIDE-ANIM
+        meaning: NAPI 已进入 hideWithAnimation（错误时可见）
+        regex: '\[window\]\[hideWithAnimation\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.HideWithAnimation
+    success:
+      - id: OK-HIDE-ANIM
+        meaning: 带动效 hide 已结束（带 ret）
+        regex: 'OnHideWithAnimation end, window'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: JsWindow.OnHideWithAnimation
+    failures:
+      - id: FAIL-HIDE-NULL
+        title: 窗口无效
+        kind: 应用误用
+        when: 窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[hideWithAnimation\]msg: The window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.HideWithAnimation
+      - id: FAIL-HIDE-TYPE
+        title: 非系统类窗口
+        kind: 应用误用
+        when: 窗类型不支持
+        meaning: 断在 NAPI
+        regex: '\[window\]\[hideWithAnimation\]msg: Only system windows'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.HideWithAnimation

@@ -1,0 +1,219 @@
+# Watchman 屏幕属性 YAML 2.3
+# 指南模块名：屏幕属性
+# 对外接口分册：apis/屏幕属性.md
+# 四仓：
+#   应用 API → @ohos.display / OH_DisplayManager
+#   实现 → display_runtime（DMS tag）
+# DTS：@ohos.display.d.ts；头文件 oh_display_manager.h
+# NAPI：window_window_manager/interfaces/kits/napi/display_runtime
+# 屏幕类 success 用 DMS tag；subsystem: Display。
+schema_version: "2.3.0"
+module_id: display
+enabled: true
+meta:
+  name: 屏幕属性
+  name_en: Display
+  subsystem: Display
+  field_id: RF-DMS-DISP
+  field_name: DMS-Display
+  description: |
+    【做什么】查询 Display 属性（分辨率/DPI/刷新率/旋转等），监听插拔/旋转/折叠/可用区域/截录状态。
+    应用走 @ohos.display；C 侧 OH_DisplayManager。实现在 display_runtime，日志主 tag 为 DMS。
+    【典型现象】拿不到默认屏、Display info 空、监听未回调、折叠状态不准。
+    【不要分流】虚拟屏创建销毁 → 虚拟屏；窗口截图隐私 → 截图与隐私模式；窗口旋转策略 → 窗口旋转。
+    【怎么定位】success 卡在 L-NAPI（DMS：GetAllDisplays success / OnGetDefaultDisplay success 等）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/display
+log_blacklist:
+  - id: BL-VS
+    regex: '(?:CreateVirtualScreen|destroyVirtualScreen|OnCreateVirtualScreen|OnDestroyVirtualScreen|SetVirtualScreenSurface|ResizeVirtualScreen)'
+    flags: i
+    to_module: virtual_screen
+    to_module_name: 虚拟屏
+    reason: 虚拟屏管理另册（同属 DMS 时靠特征串区分）
+  - id: BL-SHOT
+    regex: '(?:\[screenshot\]\[(?:pick|capture)\]|setWindowPrivacyMode|pick end)'
+    flags: i
+    to_module: screenshot_privacy
+    to_module_name: 截图与隐私模式
+    reason: 截图隐私另册
+  - id: BL-ROTATION
+    regex: '(?:WMSRotation|setPreferredOrientation)'
+    flags: i
+    to_module: window_rotation
+    to_module_name: 窗口旋转
+    reason: 窗口方向策略，不是 Display 查询
+  - id: BL-LAYOUT
+    regex: '(?:WMSLayout\b|moveWindowTo)'
+    flags: i
+    to_module: window_layout
+    to_module_name: 窗口布局
+    reason: 窗口布局
+apis:
+  external:
+    - { id: display.getAllDisplays, role: 获取全部 Display }
+    - { id: display.getDefaultDisplaySync, role: 获取默认 Display }
+    - { id: display.getDisplayByIdSync, role: 按 id 获取 Display }
+    - { id: "display.on('add'|'remove'|'change')", role: 显示设备变化 }
+    - { id: "display.on('captureStatusChange')", role: 截录投状态 }
+    - { id: "display.on('availableAreaChange')", role: 可用区域变化 }
+    - { id: display.isFoldable, role: 是否可折叠 }
+    - { id: "display.on('foldStatusChange')", role: 折叠状态变化 }
+    - { id: OH_NativeDisplayManager_GetDefaultDisplayRotation, role: C 默认屏旋转 }
+    - { id: OH_NativeDisplayManager_IsFoldable, role: C 是否可折叠 }
+  internal:
+    - { id: JsDisplayManager.GetDefaultDisplaySync, role: NAPI 默认同步查询 }
+    - { id: JsDisplayManager.GetAllDisplays, role: NAPI 全部 Display }
+    - { id: JsDisplayManager.RegisterDisplayListenerWithType, role: NAPI 注册监听 }
+    - { id: DisplayManager, role: DMS 显示管理 }
+  dependencies: []
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:DMS|\[display\]\[getDefaultDisplaySync\]|\[display\]\[getDisplayByIdSync\]|GetAllDisplays success|Display info is nullptr|params not match|Failed to convert parameter to displayId|displayid is invalid|OnRegisterDisplayManagerCallback|RegisterDisplayListenerWithType failed|callback already registered|type:\S+ ret:)
+atoms:
+  - id: get_default_display
+    title: 获取默认屏幕
+    api: display.getDefaultDisplaySync
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 getDefaultDisplaySync, symbols: [display.getDefaultDisplaySync] }
+      - { layer_id: L-NAPI, name: NAPI 同步查询（DMS 终点）, symbols: [JsDisplayManager.GetDefaultDisplaySync] }
+    enter:
+      - id: IN-DEFAULT
+        meaning: NAPI 错误路径可见（成功路径无 INFO 成功串）
+        regex: '\[display\]\[getDefaultDisplaySync\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager.GetDefaultDisplaySync
+    success: []
+    failures:
+      - id: FAIL-DEFAULT-NULL
+        title: Display info 为空
+        kind: 框架缺陷
+        when: Display info is nullptr
+        meaning: 断在 NAPI/DMS
+        regex: 'Display info is nullptr'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager.GetDefaultDisplaySync
+      - id: FAIL-DEFAULT-GONE
+        title: Display 未创建或已销毁
+        kind: 应用误用
+        when: display is not created or destroyed
+        meaning: 断在 NAPI
+        regex: '\[display\]\[getDefaultDisplaySync\]msg: display is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager.GetDefaultDisplaySync
+
+  - id: get_all_displays
+    title: 获取全部屏幕
+    api: display.getAllDisplays
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 getAllDisplays, symbols: [display.getAllDisplays] }
+      - { layer_id: L-NAPI, name: NAPI 查询（DMS 终点）, symbols: [JsDisplayManager.GetAllDisplays] }
+    enter: []
+    success:
+      - id: OK-ALL
+        meaning: 全部 Display 查询成功
+        regex: 'GetAllDisplays success'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager
+    failures:
+      - id: FAIL-ALL-PARAM
+        title: 参数不匹配
+        kind: 应用误用
+        when: params not match
+        meaning: 断在 NAPI
+        regex: 'params not match'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager
+
+  - id: get_display_by_id
+    title: 按 id 获取屏幕
+    api: display.getDisplayByIdSync
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 getDisplayByIdSync, symbols: [display.getDisplayByIdSync] }
+      - { layer_id: L-NAPI, name: NAPI 同步查询（DMS 终点）, symbols: [JsDisplayManager] }
+    enter:
+      - id: IN-BY-ID
+        meaning: NAPI 错误路径可见
+        regex: '\[display\]\[getDisplayByIdSync\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager
+    success: []
+    failures:
+      - id: FAIL-BY-ID-CONV
+        title: displayId 参数非法
+        kind: 应用误用
+        when: 无法转换 displayId
+        meaning: 断在 NAPI
+        regex: 'Failed to convert parameter to displayId'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager
+      - id: FAIL-BY-ID-NEG
+        title: displayId 小于 0
+        kind: 应用误用
+        when: displayid is invalid, less than 0
+        meaning: 断在 NAPI
+        regex: 'displayid is invalid, less than 0'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager
+      - id: FAIL-BY-ID-NULL
+        title: Display info 为空
+        kind: 框架缺陷
+        when: Display info is nullptr
+        meaning: 断在 NAPI/DMS
+        regex: 'Display info is nullptr'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager
+
+  - id: register_display_listener
+    title: 注册屏幕监听
+    api: "display.on('add'|'remove'|'change')"
+    callchain:
+      - { layer_id: L-JS, name: 应用注册 on/off, symbols: ["display.on"] }
+      - { layer_id: L-NAPI, name: NAPI 注册（DMS 终点）, symbols: [JsDisplayManager.RegisterDisplayListenerWithType] }
+    enter:
+      - id: IN-REG
+        meaning: 进入注册回调
+        regex: 'OnRegisterDisplayManagerCallback'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager
+    success:
+      - id: OK-REG
+        meaning: 监听注销/注册结果（带 type/ret）
+        regex: 'type:\S+ ret:\d+'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager
+    failures:
+      - id: FAIL-REG-TYPE
+        title: 事件类型不支持
+        kind: 应用误用
+        when: type not support
+        meaning: 断在 NAPI
+        regex: 'RegisterDisplayListenerWithType failed, .* not support'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager.RegisterDisplayListenerWithType
+      - id: FAIL-REG-DUP
+        title: 回调已注册
+        kind: 应用误用
+        when: callback already registered
+        meaning: 断在 NAPI
+        regex: 'callback already registered'
+        flags: i
+        layer_id: L-NAPI
+        function: JsDisplayManager

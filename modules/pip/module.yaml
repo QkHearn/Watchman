@@ -1,9 +1,14 @@
 # Watchman 画中画 YAML 2.3
-# 来源：接口仓 interface_sdk-js/zh-cn/api/@ohos.PiPWindow.d.ts
-#       文档仓 docs/zh-cn/application-dev/reference/apis-arkui/js-apis-pipWindow.md
-#       实现仓 window_window_manager（NAPI js_pip_* + PictureInPictureController）
-# 前端仓 repos.fe 未配置，不猜应用侧锚点。
-# 原子 = 一次对外调用。create 只创建控制器；真正建窗在 start。
+# 指南模块名：画中画（窗口类型 · 辅助窗口）
+# 对外接口分册：apis/画中画.md
+# 四仓：
+#   应用 API → window_window_manager（NAPI/生命周期）
+#   显示/布局/控制条 → window_scene_board（SCBPictureInPictureScenePanel 等）
+# DTS：interface_sdk-js/zh-cn/api/@ohos.PiPWindow.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/picture_in_picture_napi（PiPWindow）
+# NDK：oh_window_pip.h
+# FE：window_scene_board/product/{phonebase,pcbase}/ets/SceneBoard/scenemanager/pip/
+# 原子 = 一次对外调用。显示优先：start/updateSize 的 success 以 SceneBoard 为准；WM 建窗/写尺寸只作 enter 进度。
 schema_version: "2.3.0"
 module_id: pip
 enabled: true
@@ -14,95 +19,123 @@ meta:
   field_id: RF-WMS-PIP
   field_name: WMS-PiP
   description: |
-    【做什么】应用通过 @ohos.PiPWindow（isPiPEnabled / create）和 PiPController
-    （startPiP / stopPiP / setAutoStartEnabled / updateContentNode）在主窗口上创建控制器、启动、停止画中画小窗。
-    NDK 对应 OH_PictureInPicture_CreatePip / StartPip / StopPip。
-    【典型现象】create 报 401 参数错误、801 能力不支持、第二次 startPiP 失败、stop 后还原 Navigation 失败、主窗未 show 时启动失败。
-    【不要分流】普通子窗/系统悬浮窗（createSubWindow、floatWindow）→ 子窗/悬浮窗；
-    分屏/自由多窗 → 分屏；纯播放器 overlay、从未 startPiP → 媒体；
-    startPiP 已成功但画面黑（XComponent/surface）→ 依赖 ArkUI。
-    【怎么定位】阶段二按原子时间线回放：创建✓ → 启动✓/✗ → 停止✓/✗。
+    【做什么】应用辅助窗口。应用走 @ohos.PiPWindow / oh_window_pip.h；
+    window_manager 管窗口实例和生命周期；SceneBoard 管显示、布局、层级、系统绘制的控制条和动效。
+    create 只拿到控制器；startPiP 才建窗；用户看得见的小窗要等 SceneBoard 挂上控件。
+    【典型现象】主诉几乎都是显示：小窗没出来、错位、旋转后飞了、贴边异常、控制条不显示/点不动；
+    少数才是 create 401、801、主窗未 show、重复 start/stop、与闪控窗冲突、stop 后 Navigation 没还原。
+    【不要分流】createSubWindow → 子窗口；TYPE_FLOAT → 全局悬浮窗；floatView → 闪控窗；
+    floatingBall → 闪控球；自由多窗/分屏 → 自由窗口/窗口模式；从未 startPiP 的播放器 overlay → 媒体。
+    画面黑但小窗轮廓/控制条在 → ArkUI 内容节点（XComponent/typeNode），不是 SceneBoard 布局。
+    【怎么定位·显示优先】阶段二不以「WM start/show success」当启动成功。
+    启动原子只有 SceneBoard onCreateSpecificScene 才算成功（小窗挂上）；
+    WM 建窗/show 只作进入进度。时间线：创建 → 启动（WM 进度 → L-SCB✓/✗）→ 改尺寸/控制条（同样以 L-SCB 为显示终点）→ 停止。
+    窗已建但看不见 → 启动 unknown/失败标在 L-SCB；错位/比例怪 → updateSize 看 L-SCB；
+    控制条问题 → updateControl / setControlEnabled 看 L-SCB。
+    SceneBoard 日志 tag：SCBPiPManager / SCBPictureInPictureScenePanel / SCBPictureInPictureScene / PiPOverlay。
   owners: []
   kb:
     path: window_window_manager/docs/kb/pip-kb.md
     feature_dir: localize-kb/features/pip
-log_whitelist:
-  - id: WL-WMS-PIP
-    regex: '(?:WmsLogTag::)?WMS_PIP\b'
-    flags: i
-    meaning: 本模块主 tag，命中即可确认归画中画
-  - id: WL-PARAM
-    regex: pipOption\s+param\s+error
-    flags: i
-    meaning: create 时 NAPI 参数校验失败
-  - id: WL-LIFE
-    regex: (?:OnStartPictureInPicture\s+is\s+called|OnStopPictureInPicture\s+is\s+called|CreateJsPipController|\bSTART_PIP\b|\bSTOP_PIP\b)
-    flags: i
-    meaning: 启停入口或 HiSysEvent 埋点
 log_blacklist:
-  - id: BL-FLOAT
-    regex: (?:createSubWindow|floatWindow|\bsubWindow\b)
+  - id: BL-SUBWINDOW
+    regex: (?:createSubWindowWithOptions|createSubWindow|\bsubWindow\b)
     flags: i
     to_module: subwindow
-    to_module_name: 子窗/悬浮窗
-    reason: 无本模块白名单时，更像普通子窗或系统悬浮窗
-    unless_whitelist: true
-  - id: BL-SPLIT
-    regex: (?:FreeWindow|FreeMultiWindow|splitScreen|ISplit)
+    to_module_name: 子窗口
+    reason: 更像子窗口
+  - id: BL-GLOBAL-FLOAT
+    regex: (?:\bfloatWindow\b|TYPE_FLOAT|SYSTEM_FLOAT_WINDOW)
     flags: i
-    to_module: split
-    to_module_name: 分屏/自由多窗
-    reason: 分屏/自由多窗日志，不是画中画
-    unless_whitelist: true
+    to_module: global_floating_window
+    to_module_name: 全局悬浮窗
+    reason: 更像全局悬浮窗
+  - id: BL-FLOAT-VIEW
+    regex: (?:floatView|already started float view)
+    flags: i
+    to_module: float_view
+    to_module_name: 闪控窗
+    reason: 更像闪控窗
+  - id: BL-FLOAT-BALL
+    regex: (?:floatingBall|FloatingBall)
+    flags: i
+    to_module: floating_ball
+    to_module_name: 闪控球
+    reason: 更像闪控球
+  - id: BL-FREEFORM
+    regex: (?:FreeMultiWindow|isInFreeWindowMode|FreeWindow|freeform)
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: 自由窗口 / 自由多窗日志，不是画中画
+  - id: BL-WINDOW-MODE
+    regex: (?:splitScreen|ISplit|WINDOW_MODE_SPLIT)
+    flags: i
+    to_module: window_mode
+    to_module_name: 窗口模式
+    reason: 分屏等窗口模式日志，不是画中画
   - id: BL-AV
     regex: (?:\bAVPlayer\b|OH_AVPlayer)
     flags: i
-    to_module: media
+    to_module: ""
     to_module_name: 媒体播放
-    reason: 纯播放器路径，除非同时命中画中画白名单
-    unless_whitelist: true
+    reason: 纯播放器路径，不是画中画
 apis:
   external:
-    - { id: PiPWindow.isPiPEnabled, role: 能力探测 }
-    - { id: PiPWindow.create, role: 创建控制器 }
-    - { id: PiPController.startPiP, role: 启动 }
+    - { id: PiPWindow.isPiPEnabled, role: 判断设备是否支持画中画 }
+    - { id: PiPWindow.create, role: 创建控制器（不建窗） }
+    - { id: PiPController.startPiP, role: 启动（真正建窗） }
     - { id: PiPController.stopPiP, role: 停止 }
-    - { id: PiPController.setAutoStartEnabled, role: 自动启动 }
+    - { id: PiPController.setAutoStartEnabled, role: 主窗口退后台时是否自动启动 }
+    - { id: PiPController.updateContentSize, role: 更新内容尺寸 }
     - { id: PiPController.updateContentNode, role: 更新内容节点 }
-    - { id: PiPWindow.on, label: PiPWindow.on('stateChange'), role: 状态回调 }
-    - { id: OH_PictureInPicture_CreatePip, role: NDK 创建 }
+    - { id: PiPController.updatePiPControlStatus, role: 更新控制区状态 }
+    - { id: PiPController.setPiPControlEnabled, role: 使能控制区 }
+    - { id: PiPController.getPiPWindowInfo, role: 获取画中画窗口信息 }
+    - { id: PiPController.on, label: PiPController.on('stateChange'), role: 状态变化 }
+    - { id: OH_PictureInPicture_CreatePip, role: NDK 创建控制器 }
     - { id: OH_PictureInPicture_StartPip, role: NDK 启动 }
     - { id: OH_PictureInPicture_StopPip, role: NDK 停止 }
+    - { id: OH_PictureInPicture_UpdatePipContentSize, role: NDK 更新内容尺寸 }
+    - { id: OH_PictureInPicture_UpdatePipControlStatus, role: NDK 更新控制区 }
+    - { id: OH_PictureInPicture_SetPipControlEnabled, role: NDK 使能控制区 }
+    - { id: OH_PictureInPicture_SetAutoStartEnabled, role: NDK 自动启动 }
   internal:
     - { id: JsPipWindowManager, role: NAPI 创建与参数校验 }
-    - { id: JsPipController, role: NAPI 启停转发 }
+    - { id: JsPipController, role: NAPI 启停与控制区转发 }
     - { id: PictureInPictureController, role: 控制器与建窗校验 }
     - { id: PictureInPictureControllerBase, role: 启停状态机与显隐 }
     - { id: PictureInPictureManager, role: 控制器管理 }
+    - { id: FloatWindowManager.CreatePipWindow, role: 框架内真正创建画中画窗口 }
     - { id: PiPReporter, role: HiSysEvent 上报 }
+    - { id: SCBPictureInPictureScenePanel, role: SceneBoard 画中画窗口容器，挂会话、层级、旋转 }
+    - { id: SCBPictureInPictureScene, role: SceneBoard 单窗控件，拖拽、缩放、贴边、还原 }
+    - { id: SCBPiPManager, role: SceneBoard 画中画管理：自动启动开关、控制条事件、尺寸通知 }
+    - { id: PiPOverlay, role: SceneBoard 系统绘制的控制条（关闭/还原/播放模板） }
+    - { id: PipRectCalculator, role: SceneBoard 计算小窗位置与尺寸 }
   dependencies:
-    - { id: navController, module: navigation, role: 还原原页 }
+    - { id: WindowStage.getMainWindow, module: main_window, role: 依赖主窗口已显示 }
+    - { id: navController, module: navigation, role: 还原原页（非窗口管理模块） }
     - { id: XComponentController, module: arkui, role: 内容节点 }
     - { id: typeNode, module: arkui, role: typeNode 内容节点 }
-    - { id: FloatWindowManager, module: subwindow, role: 真正创建/销毁 PiP 窗口 }
 collect:
   title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
   where: BetaClub
   hint: 只需这一条正则。搜集后把结果原样贴到下方。
   regex: >-
-    (?:WMS_PIP|pipOption\s+param\s+error|config\s+is\s+null|CreateJsPipController|OnStartPictureInPicture|OnStopPictureInPicture|OnSetAutoStartEnabled|OnUpdateContentNode|pipWindow\s+is\s+starting|Repeat\s+stop\s+request|Repeated\s+PiP|START_PIP|STOP_PIP|RESOTRE_PIP|start\s+pip\s+success|show\s+pip\s+success|pip\s+window\s+stop\s+success|Create\s+pip\s+window\s+failed|Show\s+pip\s+window\s+failed|Create\s+pip\s+failed|mainWindow\s+is\s+not\s+shown|Window\s+create\s+failed|Navigation\s+operate\s+failed|Get\s+navController\s+error|Top\s+is\s+not\s+navDestination|navController\s+is\s+nullptr|setXController|xComponentController\s+is\s+null|main\s+window\s+xComponent\s+not\s+set|Invalid\s+typeNode|updateNode\s+success|restore\s+pip\s+main\s+window\s+finished)
+    (?:WMS_PIP|OnCreatePipController|pipOption\s+param\s+error|config\s+is\s+null|CreateJsPipController|OnStartPictureInPicture|OnStopPictureInPicture|OnSetAutoStartEnabled|OnUpdateContentNode|OnUpdateContentSize|OnUpdatePiPControlStatus|OnSetPiPControlEnabled|OnGetPiPWindowInfo|OnRegisterCallback|pipWindow\s+is\s+starting|Repeat\s+stop\s+request|Repeated\s+PiP|START_PIP|STOP_PIP|RESOTRE_PIP|start\s+pip\s+success|show\s+pip\s+success|pip\s+window\s+stop\s+success|Create\s+pip\s+window\s+failed|Show\s+pip\s+window\s+failed|Create\s+pip\s+failed|mainWindow\s+is\s+not\s+shown|Window\s+create\s+failed|already started float view|Navigation\s+operate\s+failed|Get\s+navController\s+error|Top\s+is\s+not\s+navDestination|navController\s+is\s+nullptr|setXController|xComponentController\s+is\s+null|main\s+window\s+xComponent\s+not\s+set|Invalid\s+typeNode|updateNode\s+success|restore\s+pip\s+main\s+window\s+finished|UpdateContentSize window|Failed to get pip window|pipWindow not exist|Register type|\[updateContentSize\]|\[updatePiPControlStatus\]|\[setPiPControlEnabled\]|SCBPiPManager|SCBPictureInPictureScenePanel|SCBPictureInPictureScene|PiPOverlay|PipRectCalculator|VideoPlayControlPanel|VideoCallControlPanel|VideoMeetingControlPanel|LiveControlPanel|onCreateSpecificScene|onStartPiPFailed|forbid autostart|background_auto_start|notifyPipSizeChange|setPiPControlEvent|onActionRestore|processPreRestore|get pip_auto_start_value|enable show is false|processStart:)
 atoms:
   - id: create
     title: 创建
     api: PiPWindow.create
     callchain:
-      - { layer_id: L-JS, name: 应用调用 create, do: 组装 PiPConfiguration（context / XComponent / template / controlGroup），可选传入 typeNode, symbols: [PiPWindow.create] }
-      - { layer_id: L-NAPI, name: NAPI 校验, do: JsPipWindowManager 解析 config，校验模板与控件组, symbols: [JsPipWindowManager] }
-      - { layer_id: L-WM-CLIENT, name: 拿到主窗并构造控制器, do: GetMainWindowWithContext 后 new PictureInPictureController；此时还不建 PiP 窗口, symbols: [PictureInPictureController, PictureInPictureManager] }
+      - { layer_id: L-JS, name: 应用调用 create, do: 组装 PiPConfiguration（context / XComponent / template / controlGroup），可选传入 typeNode, symbols: [PiPWindow.create, OH_PictureInPicture_CreatePip] }
+      - { layer_id: L-NAPI, name: NAPI 校验, do: picture_in_picture_napi 里 JsPipWindowManager 解析 config，校验模板与控件组, symbols: [JsPipWindowManager] }
+      - { layer_id: L-WM-CLIENT, name: 拿到主窗口并构造控制器, do: GetMainWindowWithContext 后 new PictureInPictureController；此时还不建画中画窗口, symbols: [PictureInPictureController, PictureInPictureManager] }
     enter:
       - id: IN-CREATE
         meaning: 已进入 PiPWindow.create
-        regex: '\[NAPI\]'
+        regex: OnCreatePipController
         flags: i
         layer_id: L-NAPI
         function: JsPipWindowManager
@@ -183,13 +216,15 @@ atoms:
   - id: start
     title: 启动
     api: PiPController.startPiP
+    # 显示优先：用户看得见的小窗以 L-SCB 为终点。WM show 只算进入进度，不算原子成功。
     callchain:
       - { layer_id: L-JS, name: 应用调用 startPiP, do: 启动画中画；错误码 1300012～1300015、1300034, symbols: [PiPController.startPiP, OH_PictureInPicture_StartPip] }
-      - { layer_id: L-NAPI, name: NAPI 转发, do: JsPipController 调 StartPictureInPicture(USER_START), symbols: [JsPipController] }
+      - { layer_id: L-NAPI, name: NAPI 转发, do: picture_in_picture_napi 里 JsPipController 调 StartPictureInPicture(USER_START), symbols: [JsPipController] }
       - { layer_id: L-WM-CLIENT, name: 状态机与建窗, do: 校验状态后 CreatePipWindow + Show；主窗未 show、重复启动、Navigation 失败都停在这, symbols: [PictureInPictureController, PictureInPictureControllerBase] }
-      - { layer_id: L-WM-SESSION, name: 窗口创建, do: FloatWindowManager.CreatePipWindow 真正出窗, symbols: [FloatWindowManager] }
       - { layer_id: L-DEP-NAV, name: Navigation 缓存, do: start 前 IsPullPiPAndHandleNavigation，失败则整次启动失败, symbols: [navController] }
-      - { layer_id: L-DEP-XCOMP, name: 内容节点, do: 非 typeNode 路径把 XComponent 挂到 PiP 窗, symbols: [XComponentController] }
+      - { layer_id: L-DEP-XCOMP, name: 内容节点, do: 非 typeNode 路径把 XComponent 挂到 PiP 窗；画面黑但框在时看这层, symbols: [XComponentController] }
+      - { layer_id: L-WM-SESSION, name: 窗口实例已出, do: FloatWindowManager.CreatePipWindow + show 成功（实例有了，还不等于小窗显示出来）, symbols: [FloatWindowManager.CreatePipWindow] }
+      - { layer_id: L-SCB, name: SceneBoard 挂控件（显示终点）, do: 挂会话、排布局、画 PiPOverlay；只有这里成功用户才看到小窗, symbols: [SCBPictureInPictureScenePanel, SCBPictureInPictureScene, SCBPiPManager, PiPOverlay] }
     enter:
       - id: IN-START
         meaning: 已进入 startPiP
@@ -197,19 +232,19 @@ atoms:
         flags: i
         layer_id: L-NAPI
         function: JsPipController
-    success:
-      - id: OK-START
-        meaning: 启动完成，窗口已 show
-        regex: '(?:start\s+pip\s+success|show\s+pip\s+success)'
+      - id: IN-START-WM
+        meaning: WM 侧已建窗/show（进度，还不算显示成功）
+        regex: '(?:start\s+pip\s+success|show\s+pip\s+success|\bSTART_PIP\b)'
         flags: i
-        layer_id: L-WM-CLIENT
+        layer_id: L-WM-SESSION
         function: PictureInPictureControllerBase
-      - id: OK-START-EVENT
-        meaning: HiSysEvent 上报启动成功
-        regex: '\bSTART_PIP\b'
+    success:
+      - id: OK-START-SCB
+        meaning: SceneBoard 已挂上画中画窗口控件（显示成功）
+        regex: 'onCreateSpecificScene:'
         flags: i
-        layer_id: L-WM-CLIENT
-        function: PiPReporter
+        layer_id: L-SCB
+        function: SCBPictureInPictureScenePanel
     failures:
       - id: FAIL-START-ABORT
         title: 启动被中止
@@ -240,10 +275,10 @@ atoms:
         layer_id: L-WM-CLIENT
         function: PictureInPictureController
       - id: FAIL-START-MAIN-NOT-SHOWN
-        title: 主窗未显示
+        title: 主窗口未显示
         kind: 应用误用
-        when: 非自动启动且主窗不是 STATE_SHOWN，文档对应 1300013
-        meaning: 建窗校验失败，未创建 PiP 窗口
+        when: 非自动启动且主窗口不是 STATE_SHOWN，文档对应 1300013
+        meaning: 建窗校验失败，未创建画中画窗口
         regex: mainWindow\s+is\s+not\s+shown\.\s*create\s+failed\.?
         flags: i
         layer_id: L-WM-CLIENT
@@ -258,7 +293,7 @@ atoms:
         layer_id: L-WM-CLIENT
         function: PictureInPictureController
       - id: FAIL-START-NO-MAIN
-        title: 主窗或 XComponent 为空
+        title: 主窗口或 XComponent 为空
         kind: 应用误用
         when: 非 typeNode 且主窗或 XComponentController 为空，文档对应 1300013
         meaning: 断在建窗校验
@@ -295,12 +330,21 @@ atoms:
         layer_id: L-DEP-NAV
         function: navController
       - id: FAIL-START-CREATE-WIN
-        title: 创建 PiP 窗口失败
+        title: 创建画中画窗口失败
         kind: 框架缺陷
         when: FloatWindowManager.CreatePipWindow 失败，文档对应 1300013 / 1300034
         meaning: 控制器已放行，窗口服务没建出窗
-        locate: 若同时有 App has already started float view 则是与其它浮窗冲突（1300034）
+        locate: 若同时有 already started float view 则改看闪控窗（1300034）
         regex: '(?:Create\s+pip\s+window\s+failed|Window\s+create\s+failed,\s*reason:)'
+        flags: i
+        layer_id: L-WM-SESSION
+        function: FloatWindowManager
+      - id: FAIL-START-FLOAT-VIEW
+        title: 与闪控窗冲突
+        kind: 依赖失败
+        when: 应用已启动闪控窗，无法再建画中画，文档对应 1300034
+        meaning: 窗口服务拒绝，冲突在闪控窗
+        regex: already started float view
         flags: i
         layer_id: L-WM-SESSION
         function: FloatWindowManager
@@ -322,6 +366,33 @@ atoms:
         flags: i
         layer_id: L-DEP-XCOMP
         function: XComponentController
+      - id: FAIL-START-SCB
+        title: SceneBoard 收到启动失败
+        kind: 框架缺陷
+        when: WM 建窗或 show 失败后通知 SceneBoard，界面可能弹出「已有画中画」
+        meaning: 窗口实例侧已失败，SceneBoard 未挂上控件
+        regex: onStartPiPFailed
+        flags: i
+        layer_id: L-SCB
+        function: SCBPictureInPictureScenePanel
+      - id: FAIL-START-SCB-SHOW
+        title: SceneBoard 小窗未进入可显示态
+        kind: 框架缺陷
+        when: 会话已到 SceneBoard，但 enableShow 为假（无 session 或未 active）
+        meaning: 显示断在 SceneBoard 单窗控件
+        regex: 'enable show is false'
+        flags: i
+        layer_id: L-SCB
+        function: SCBPictureInPictureScene
+      - id: FAIL-START-SCB-PROCESS
+        title: SceneBoard 计算启动源矩形失败
+        kind: 框架缺陷
+        when: 父容器会话无效或 processStart 异常，小窗位置可能错/看不见
+        meaning: 显示断在 SceneBoard 布局起点
+        regex: 'processStart:\s*(?:container session not valid|error occured)'
+        flags: i
+        layer_id: L-SCB
+        function: SCBPictureInPictureScene
 
   - id: stop
     title: 停止
@@ -330,6 +401,7 @@ atoms:
       - { layer_id: L-JS, name: 应用调用 stopPiP, do: 停止画中画；错误码 1300011 / 1300012 / 1300015, symbols: [PiPController.stopPiP, OH_PictureInPicture_StopPip] }
       - { layer_id: L-NAPI, name: NAPI 转发, do: StopPictureInPictureFromClient, symbols: [JsPipController] }
       - { layer_id: L-WM-CLIENT, name: 状态机与销毁, do: STOPPING 后销毁窗口并还原主窗, symbols: [PictureInPictureControllerBase] }
+      - { layer_id: L-SCB, name: SceneBoard 拆控件, do: 会话 DISCONNECT 后从 SCBPictureInPictureScenePanel 卸下并 detach, symbols: [SCBPictureInPictureScenePanel, SCBPiPManager] }
       - { layer_id: L-DEP-NAV, name: 还原原页, do: RestorePictureInPictureWindow / PushInPIP 回退, symbols: [navController] }
     enter:
       - id: IN-STOP
@@ -352,11 +424,17 @@ atoms:
         layer_id: L-WM-CLIENT
         function: PiPReporter
       - id: OK-RESTORE
-        meaning: 主窗还原完成
+        meaning: 主窗口还原完成
         regex: restore\s+pip\s+main\s+window\s+finished
         flags: i
         layer_id: L-DEP-NAV
         function: PictureInPictureController
+      - id: OK-STOP-SCB
+        meaning: SceneBoard 开始还原（控制条还原或卸窗动画）
+        regex: '(?:processPreRestore is called|onActionRestore)'
+        flags: i
+        layer_id: L-SCB
+        function: SCBPictureInPictureScene
     failures:
       - id: FAIL-STOP-REPEAT
         title: 重复停止
@@ -399,9 +477,10 @@ atoms:
     title: 自动启动
     api: PiPController.setAutoStartEnabled
     callchain:
-      - { layer_id: L-JS, name: 应用调用 setAutoStartEnabled, symbols: [PiPController.setAutoStartEnabled] }
+      - { layer_id: L-JS, name: 应用调用 setAutoStartEnabled, symbols: [PiPController.setAutoStartEnabled, OH_PictureInPicture_SetAutoStartEnabled] }
       - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsPipController] }
-      - { layer_id: L-WM-CLIENT, name: 登记自动启动, do: 主窗退后台时由框架再走 start 路径, symbols: [PictureInPictureController, PictureInPictureManager] }
+      - { layer_id: L-WM-CLIENT, name: 登记自动启动, do: 主窗口退后台时由框架再走 start 路径, symbols: [PictureInPictureController, PictureInPictureManager] }
+      - { layer_id: L-SCB, name: SceneBoard 读开关并拉起, do: 监听 settings auto_start_pip_status，退后台时 setPipActionEvent background_auto_start, symbols: [SCBPiPManager] }
     enter:
       - id: IN-AUTOSTART
         meaning: 已进入 setAutoStartEnabled
@@ -435,6 +514,15 @@ atoms:
         flags: i
         layer_id: L-DEP-NAV
         function: navController
+      - id: FAIL-AUTOSTART-SCB
+        title: SceneBoard 禁止自动启动
+        kind: 依赖失败
+        when: 设置开关关闭、当前屏禁止（如 PadWithCar）、或 isNeedStartPiP 为假
+        meaning: 应用已登记自动启动，SceneBoard 没有发 background_auto_start
+        regex: '(?:forbid autostart|sendActionControlEvent background_auto_start -1 err|get pip_auto_start_value, result: false)'
+        flags: i
+        layer_id: L-SCB
+        function: SCBPiPManager
 
   - id: updateNode
     title: 更新内容节点
@@ -464,6 +552,221 @@ atoms:
         when: 未传或类型不对，文档对应 401
         meaning: 断在 NAPI
         regex: Invalid\s+typeNode
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+
+  - id: updateSize
+    title: 更新内容尺寸
+    api: PiPController.updateContentSize
+    # 显示优先：比例写到 WM 不算布局成功；以 SceneBoard 重算/通知为成功。
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 updateContentSize, symbols: [PiPController.updateContentSize, OH_PictureInPicture_UpdatePipContentSize] }
+      - { layer_id: L-NAPI, name: NAPI 校验宽高, symbols: [JsPipController] }
+      - { layer_id: L-WM-CLIENT, name: 更新比例, do: 已启动时 UpdatePiPRect（进度）, symbols: [PictureInPictureController] }
+      - { layer_id: L-SCB, name: SceneBoard 重算布局（显示终点）, do: PipRectCalculator 改位置尺寸，再 notifyPipSizeChange, symbols: [PipRectCalculator, SCBPiPManager] }
+    enter:
+      - id: IN-SIZE
+        meaning: 已进入 updateContentSize
+        regex: OnUpdateContentSize\s+is\s+called
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+      - id: IN-SIZE-WM
+        meaning: WM 已写入宽高（进度，还不算小窗布局完成）
+        regex: 'UpdateContentSize window:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureController
+    success:
+      - id: OK-SIZE-SCB
+        meaning: SceneBoard 已按新比例排布局（显示成功）
+        regex: '(?:notifyPipSizeChange:|ratio change rect\[)'
+        flags: i
+        layer_id: L-SCB
+        function: SCBPiPManager
+    failures:
+      - id: FAIL-SIZE-ARG
+        title: 宽高非法
+        kind: 应用误用
+        when: 参数个数不对，或宽高不是正整数，文档对应 401
+        meaning: 断在 NAPI
+        regex: '(?:Invalid args count, need 2 args|Failed to convert parameter to int or (?:width|height) <= 0)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+      - id: FAIL-SIZE-CTRL
+        title: 控制器已销毁
+        kind: 应用误用
+        when: 控制器为空仍调 updateContentSize
+        meaning: 断在 NAPI
+        regex: '\[updateContentSize\]msg: Controller is nullptr'
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+      - id: FAIL-SIZE-NO-WIN
+        title: 画中画窗口不存在
+        kind: 应用误用
+        when: 尚未 start 或已销毁
+        meaning: 控制器里没有可更新的窗口
+        regex: pipWindow not exist
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureController
+      - id: FAIL-SIZE-SCB
+        title: SceneBoard 通知尺寸失败
+        kind: 框架缺陷
+        when: 小窗比例已改，但 notifyPipSizeChange 抛错
+        meaning: 断在 SceneBoard 布局
+        regex: 'notifyPipSizeChange err'
+        flags: i
+        layer_id: L-SCB
+        function: SCBPiPManager
+
+  - id: updateControl
+    title: 更新控制区状态
+    api: PiPController.updatePiPControlStatus
+    # 显示：控制条由 SceneBoard PiPOverlay 画；应用写状态走 WM，用户点击回传走 SCB。
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 updatePiPControlStatus, symbols: [PiPController.updatePiPControlStatus, OH_PictureInPicture_UpdatePipControlStatus] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsPipController] }
+      - { layer_id: L-WM-CLIENT, name: 写控件状态（进度）, symbols: [PictureInPictureControllerBase] }
+      - { layer_id: L-SCB, name: SceneBoard 控制条（显示终点）, do: PiPOverlay 按模板刷新；用户点击则 setPiPControlEvent 回应用, symbols: [PiPOverlay, SCBPiPManager] }
+    enter:
+      - id: IN-CTRL
+        meaning: 已进入 updatePiPControlStatus
+        regex: OnUpdatePiPControlStatus
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+      - id: IN-CTRL-WM
+        meaning: WM 已写入 controlType/status（进度）
+        regex: 'controlType:\s*\d+,\s*status:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureControllerBase
+    success:
+      - id: OK-CTRL-SCB
+        meaning: SceneBoard 控制条已按状态刷新或回传点击
+        regex: '(?:setPiPControlEvent control:|templateInfo\.controlGroup)'
+        flags: i
+        layer_id: L-SCB
+        function: SCBPiPManager
+    failures:
+      - id: FAIL-CTRL-ARG
+        title: 参数非法
+        kind: 应用误用
+        when: controlType / status 转换失败，文档对应 401
+        meaning: 断在 NAPI
+        regex: '\[updatePiPControlStatus\]msg:'
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+      - id: FAIL-CTRL-SCB
+        title: SceneBoard 回传控制条事件失败
+        kind: 框架缺陷
+        when: 用户点控制条后 setPiPControlEvent 抛错
+        meaning: 断在 SceneBoard 控制条
+        regex: 'setPiPControlEvent .+ err'
+        flags: i
+        layer_id: L-SCB
+        function: SCBPiPManager
+      - id: FAIL-CTRL-NO-WIN
+        title: 画中画窗口不存在
+        kind: 应用误用
+        when: 窗口已销毁仍更新控制区
+        meaning: 断在控制器
+        regex: pipWindow not exist
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureControllerBase
+
+  - id: setControlEnabled
+    title: 使能控制区
+    api: PiPController.setPiPControlEnabled
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setPiPControlEnabled, symbols: [PiPController.setPiPControlEnabled, OH_PictureInPicture_SetPipControlEnabled] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsPipController] }
+      - { layer_id: L-WM-CLIENT, name: 写控件使能, symbols: [PictureInPictureControllerBase] }
+      - { layer_id: L-SCB, name: SceneBoard 控制条使能, do: setControlGroupsControlEnable 刷新 PiPOverlay, symbols: [SCBPiPManager, PiPOverlay] }
+    enter:
+      - id: IN-CTRL-EN
+        meaning: 已进入 setPiPControlEnabled
+        regex: OnSetPiPControlEnabled
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+    success:
+      - id: OK-CTRL-EN
+        meaning: 已设置控制区使能
+        regex: 'controlType:\s*\d+,\s*enabled:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: PictureInPictureControllerBase
+    failures:
+      - id: FAIL-CTRL-EN-ARG
+        title: 参数非法
+        kind: 应用误用
+        when: controlType / enabled 转换失败，文档对应 401
+        meaning: 断在 NAPI
+        regex: '\[setPiPControlEnabled\]msg:'
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+
+  - id: getInfo
+    title: 获取画中画窗口信息
+    api: PiPController.getPiPWindowInfo
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 getPiPWindowInfo, symbols: [PiPController.getPiPWindowInfo] }
+      - { layer_id: L-NAPI, name: NAPI 取窗, symbols: [JsPipController] }
+      - { layer_id: L-WM-CLIENT, name: GetPipWindow, symbols: [PictureInPictureControllerBase] }
+    enter:
+      - id: IN-INFO
+        meaning: 已进入 getPiPWindowInfo
+        regex: OnGetPiPWindowInfo
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+    success: []
+    failures:
+      - id: FAIL-INFO-NO-WIN
+        title: 窗口未创建或已销毁
+        kind: 应用误用
+        when: 尚未 start 或已 stop，文档对应内部错误
+        meaning: 拿不到画中画窗口
+        regex: Failed to get pip window
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+
+  - id: stateChange
+    title: 注册状态回调
+    api: PiPController.on
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 on('stateChange'), symbols: [PiPController.on] }
+      - { layer_id: L-NAPI, name: 登记监听, symbols: [JsPipController] }
+    enter:
+      - id: IN-ON
+        meaning: 已进入 on
+        regex: OnRegisterCallback\s+is\s+called
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+    success:
+      - id: OK-ON
+        meaning: 回调已登记
+        regex: 'Register type .+ success'
+        flags: i
+        layer_id: L-NAPI
+        function: JsPipController
+    failures:
+      - id: FAIL-ON-ARG
+        title: 回调类型或函数非法
+        kind: 应用误用
+        when: 类型名不对或 callback 不可调用
+        meaning: 断在 NAPI
+        regex: '(?:Failed to convert parameter to callbackType|Callback is nullptr or not callable|Callback already registered)'
         flags: i
         layer_id: L-NAPI
         function: JsPipController

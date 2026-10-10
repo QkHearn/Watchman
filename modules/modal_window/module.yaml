@@ -1,0 +1,248 @@
+# Watchman 模态窗口 YAML 2.3
+# 指南模块名：模态窗口
+# 对外接口分册：apis/模态窗口.md
+# 四仓：
+#   应用 API → @ohos.window（createWindow + WindowType.TYPE_DIALOG）
+#   协议落地 → window_window_manager（WMSDialog）
+#   SceneBoard：无独立 Dialog Panel；success 默认 L-WM-CLIENT / L-NAPI
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+schema_version: "2.3.0"
+module_id: modal_window
+enabled: true
+meta:
+  name: 模态窗口
+  name_en: ModalWindow
+  subsystem: Window
+  field_id: RF-WMS-DIALOG
+  field_name: WMS-Dialog
+  description: |
+    【做什么】应用辅助窗口，类型 WindowType.TYPE_DIALOG；临时打断流程直至用户响应。
+    应用走 window.createWindow；WM 主 tag：WMSDialog。
+    【典型现象】创建失败、show 被拒（focusOnShow）、bindDialogTarget 权限、返回手势设置失败。
+    【不要分流】子窗口 createSubWindow；全局悬浮 TYPE_FLOAT；系统窗口状态栏等；
+    闪控窗/闪控球；ArkUI 自定义弹窗（非 TYPE_DIALOG）。
+    【怎么定位】success 卡在 Window Connect / set dialog window end / show end（L-NAPI/L-WM-CLIENT）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/modal_window
+log_blacklist:
+  - id: BL-SUBWINDOW
+    regex: '(?:createSubWindowWithOptions|createSubWindow|Create sub window)'
+    flags: i
+    to_module: subwindow
+    to_module_name: 子窗口
+    reason: 更像子窗口
+  - id: BL-GLOBAL-FLOAT
+    regex: '(?:TYPE_FLOAT CheckCallingPermission|SYSTEM_FLOAT_WINDOW)'
+    flags: i
+    to_module: global_floating_window
+    to_module_name: 全局悬浮窗
+    reason: 更像全局悬浮窗
+  - id: BL-SYSTEM
+    regex: '(?:only system window can set|Invalid SCB type|showWithAnimation|StatusBarView)'
+    flags: i
+    to_module: system_window
+    to_module_name: 系统窗口
+    reason: 更像系统窗口
+  - id: BL-MAIN
+    regex: '(?:Get main window|load content end|Please create mainWindow First)'
+    flags: i
+    to_module: main_window
+    to_module_name: 主窗口
+    reason: 更像主窗口
+  - id: BL-PIP
+    regex: '(?:WMSPiP|SCBPiPManager)'
+    flags: i
+    to_module: pip
+    to_module_name: 画中画
+    reason: 更像画中画
+apis:
+  external:
+    - { id: window.createWindow, label: "window.createWindow(TYPE_DIALOG)", role: 创建模态窗口 }
+    - { id: Window.setUIContent, role: 加载页面 }
+    - { id: Window.showWindow, role: 显示 }
+    - { id: Window.destroyWindow, role: 销毁 }
+    - { id: Window.bindDialogTarget, role: 绑定 Dialog 目标（系统能力相关） }
+    - { id: Window.setDialogBackGestureEnabled, role: 设置返回手势 }
+  internal:
+    - { id: JsWindowManager.OnCreateWindow, role: NAPI 创建 }
+    - { id: JsWindow.OnBindDialogTarget, role: NAPI 绑定目标 }
+    - { id: JsWindow.OnSetDialogBackGestureEnabled, role: NAPI 返回手势 }
+    - { id: WindowSceneSessionImpl.BindDialogTarget, role: WM 绑定 }
+    - { id: WindowSessionImpl.Connect, role: WM Connect }
+  dependencies:
+    - { id: WindowStage.getMainWindow, module: main_window, role: 常依赖主窗上下文 }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSDialog|TYPE_DIALOG|set dialog window end|BindDialogTarget end|Bind dialog success|create dialogWindow|setDialogBackGestureEnabled|only sub window and dialog is valid|success \[name:|Window Connect \[name:|Create window failed|TYPE_FLOAT CheckCallingPermission|show end|Modal subWindow and dialog can not set focusOnShow|Window show failed|Window destroy failed|permission denied, require system application|\[window\]\[(?:createWindow|showWindow|destroyWindow|bindDialogTarget|setDialogBackGestureEnabled)\])
+atoms:
+  - id: create_dialog
+    title: 创建模态窗口
+    api: window.createWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用 createWindow(TYPE_DIALOG), symbols: [window.createWindow] }
+      - { layer_id: L-NAPI, name: NAPI 解析配置并创建, symbols: [JsWindowManager.OnCreateWindow] }
+      - { layer_id: L-WM-CLIENT, name: Window::Create / Connect, symbols: [Window.Create, WindowSessionImpl.Connect] }
+    enter:
+      - id: IN-CREATE-DLG
+        meaning: 已进入 createWindow
+        regex: '\[window\]\[createWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager.OnCreateWindow
+      - id: IN-CREATE-DLG-TYPE
+        meaning: 已解析窗口类型（含 TYPE_DIALOG）
+        regex: 'type=\d+, name='
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager.OnCreateWindow
+    success:
+      - id: OK-CREATE-DLG
+        meaning: 会话已 Connect（创建落地）
+        regex: 'Window Connect \[name:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.Connect
+    failures:
+      - id: FAIL-DLG-PARAM
+        title: 创建参数非法
+        kind: 应用误用
+        when: 配置解析失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createWindow\]msg: (?:Failed to parse config|Mandatory parameters are left unspecified|Incorrect number of parameters)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager.OnCreateWindow
+      - id: FAIL-DLG-CREATE
+        title: 创建失败
+        kind: 框架缺陷
+        when: Window::Create 失败
+        meaning: 断在 NAPI
+        regex: '\[window\]\[createWindow\]msg:.*Create window failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowManager
+      - id: FAIL-CONNECT
+        title: Connect 失败
+        kind: 框架缺陷
+        when: surfaceNode/renderSession 为空
+        meaning: 断在 WM
+        regex: 'connect failed,'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.Connect
+
+  - id: show_dialog
+    title: 显示模态窗口
+    api: Window.showWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用 showWindow, symbols: [Window.showWindow] }
+      - { layer_id: L-NAPI, name: NAPI Show, symbols: [JsWindow.OnShowWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Show, symbols: [WindowSessionImpl.Show] }
+    enter:
+      - id: IN-SHOW-DLG
+        meaning: 已进入 show
+        regex: '\[window\]\[showWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+    success:
+      - id: OK-SHOW-DLG
+        meaning: show 完成
+        regex: 'show end, ret='
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+      - id: OK-SHOW-DLG-STATE
+        meaning: Dialog 状态变更成功（WMSDialog）
+        regex: 'success \[name:.*, id:\d+, type:\d+\],'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.NotifyDialogStateChange
+    failures:
+      - id: FAIL-SHOW-FOCUS-DLG
+        title: Dialog 不可设 focusOnShow
+        kind: 应用误用
+        when: show 选项带 focusOnShow
+        meaning: 断在 NAPI
+        regex: 'Modal subWindow and dialog can not set focusOnShow'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+      - id: FAIL-SHOW-DLG
+        title: Show 失败
+        kind: 框架缺陷
+        when: Show 非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[showWindow\]msg: Window show failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnShowWindow
+
+  - id: set_dialog_back_gesture
+    title: 设置 Dialog 返回手势
+    api: Window.setDialogBackGestureEnabled
+    callchain:
+      - { layer_id: L-JS, name: 应用设置返回手势, symbols: [Window.setDialogBackGestureEnabled] }
+      - { layer_id: L-NAPI, name: NAPI 转发, symbols: [JsWindow.OnSetDialogBackGestureEnabled] }
+      - { layer_id: L-WM-CLIENT, name: WM 写入, symbols: [Window.SetDialogBackGestureEnabled] }
+    enter:
+      - id: IN-DLG-GESTURE
+        meaning: 已进入设置返回手势
+        regex: '\[window\]\[setDialogBackGestureEnabled\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetDialogBackGestureEnabled
+    success:
+      - id: OK-DLG-GESTURE
+        meaning: 设置完成
+        regex: 'set dialog window end'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetDialogBackGestureEnabled
+    failures:
+      - id: FAIL-DLG-GESTURE-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: enable 参数错误
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setDialogBackGestureEnabled\]msg: (?:Mandatory parameters are left unspecified|Incorrect parameter types)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetDialogBackGestureEnabled
+
+  - id: destroy_dialog
+    title: 销毁模态窗口
+    api: Window.destroyWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用 destroyWindow, symbols: [Window.destroyWindow] }
+      - { layer_id: L-NAPI, name: NAPI 销毁, symbols: [JsWindow.OnDestroyWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Destroy, symbols: [WindowSessionImpl.Destroy] }
+    enter:
+      - id: IN-DESTROY-DLG
+        meaning: 已进入销毁
+        regex: '\[window\]\[destroyWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow
+    success:
+      - id: OK-DESTROY-DLG
+        meaning: 销毁完成
+        regex: 'OnDestroyWindow end, window \['
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow
+    failures:
+      - id: FAIL-DESTROY-DLG
+        title: 销毁失败
+        kind: 框架缺陷
+        when: Destroy 非 OK
+        meaning: 断在 NAPI
+        regex: '\[window\]\[destroyWindow\]msg: Window destroy failed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnDestroyWindow

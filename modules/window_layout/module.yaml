@@ -1,0 +1,268 @@
+# Watchman 窗口布局 YAML 2.3
+# 指南模块名：窗口布局
+# 对外接口分册：apis/窗口布局.md
+# 四仓：
+#   应用 API → @ohos.window
+#   协议落地 → window_window_manager（WMSLayout；PC 侧可见 WMSLayoutPc）
+#   SceneBoard：无独立布局 Panel；success 卡 L-WM-CLIENT
+# DTS：interface_sdk-js/zh-cn/api/@ohos.window.d.ts
+# NAPI：window_window_manager/interfaces/kits/napi/window_runtime
+schema_version: "2.3.0"
+module_id: window_layout
+enabled: true
+meta:
+  name: 窗口布局
+  name_en: WindowLayout
+  subsystem: Window
+  field_id: RF-WMS-LAYOUT
+  field_name: WMS-Layout
+  description: |
+    【做什么】管理窗口位置、尺寸与尺寸限制（px/vp）；未设 limits 时返回系统限制。
+    应用走 @ohos.window（moveWindowTo / resize / setWindowLimits / enableDrag 等）。
+    主责在 window_manager（WMSLayout，PC 侧可有 WMSLayoutPc）；SceneBoard 无独立布局控件。
+    【典型现象】移动/缩放不生效、limits 非法、拖拽使能失败、全屏窗不可 resize。
+    【不要分流】沉浸式系统栏/避让 → 窗口沉浸式；自由窗装饰 → 自由窗口；旋转策略 → 窗口旋转。
+    【怎么定位】success 卡在 L-WM-CLIENT（布局请求已下发/属性已写）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/window_layout
+log_blacklist:
+  - id: BL-IMMS
+    regex: '\bWMSImms\b'
+    flags: i
+    to_module: immersive
+    to_module_name: 窗口沉浸式
+    reason: 沉浸/避让不是尺寸布局
+  - id: BL-ROTATION
+    regex: '\bWMSRotation\b'
+    flags: i
+    to_module: window_rotation
+    to_module_name: 窗口旋转
+    reason: 旋转策略另册
+  - id: BL-FREEFORM
+    regex: '(?:WMSDecor|setWindowDecorVisible|FreeMultiWindow)'
+    flags: i
+    to_module: freeform
+    to_module_name: 自由窗口
+    reason: 自由窗装饰不是布局 API
+  - id: BL-LIFE
+    regex: '(?:\bWMSLife\b|Window show success)'
+    flags: i
+    to_module: window_lifecycle
+    to_module_name: 窗口生命周期
+    reason: 显示/销毁不是布局
+  - id: BL-HIERARCHY
+    regex: '\bWMSHierarchy\b'
+    flags: i
+    to_module: window_hierarchy
+    to_module_name: 窗口层级
+    reason: 层级不是布局
+apis:
+  external:
+    - { id: Window.getWindowLimits, role: 查询尺寸限制（px） }
+    - { id: Window.getWindowLimitsVP, role: 查询尺寸限制（vp） }
+    - { id: Window.setWindowLimits, role: 运行时设置尺寸限制 }
+    - { id: Window.moveWindowTo, role: 移动位置（调用成功即返回） }
+    - { id: Window.moveWindowToAsync, role: 移动位置（生效后返回） }
+    - { id: Window.moveWindowToGlobal, role: 基于目标屏幕左上角移动 }
+    - { id: Window.moveWindowToGlobalDisplay, role: 基于全局坐标系移动 }
+    - { id: Window.resize, role: 改变大小（调用成功即返回） }
+    - { id: Window.resizeAsync, role: 改变大小（生效后返回） }
+    - { id: Window.enableDrag, role: 使能/禁止拖拽缩放 }
+  internal:
+    - { id: JsWindow.OnMoveTo, role: NAPI moveWindowTo }
+    - { id: JsWindow.OnSetWindowLimits, role: NAPI setWindowLimits }
+    - { id: WindowSceneSessionImpl.MoveTo, role: WM 移动 }
+    - { id: WindowSceneSessionImpl.Resize, role: WM 缩放 }
+    - { id: WindowSceneSessionImpl.SetWindowLimits, role: WM 写 limits }
+    - { id: WindowSessionImpl.EnableDrag, role: WM 拖拽使能 }
+  dependencies: []
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSLayout(?:Pc)?|\[window\]\[moveWindowTo|\[window\]\[resize|\[window\]\[setWindowLimits\]|\[window\]\[enableDrag\]|MoveTo:\(|\[WindowRectUpdate:ClientReq\] Resize|\[WindowLimitsUpdate:ClientReq\] SetWindowLimits|Unsupported operation for pip window|Fullscreen window could not resize|window should not resize|The device is not supported|invalid window type|type not support|Failed to convert parameter to (?:windowLimits|enableDrag|x|y))
+atoms:
+  - id: move_window_to
+    title: 移动窗口
+    api: Window.moveWindowTo
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 moveWindowTo, symbols: [Window.moveWindowTo, Window.moveWindowToAsync] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow.OnMoveTo] }
+      - { layer_id: L-WM-CLIENT, name: WM MoveTo（协议终点）, symbols: [WindowSceneSessionImpl.MoveTo] }
+    enter:
+      - id: IN-MOVE
+        meaning: NAPI 进入 moveWindowTo
+        regex: '\[window\]\[moveWindowTo'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnMoveTo
+    success:
+      - id: OK-MOVE
+        meaning: WM 已下发 MoveTo
+        regex: 'MoveTo:\(\d+ \d+\)'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.MoveTo
+    failures:
+      - id: FAIL-MOVE-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: 坐标/参数错误
+        meaning: 断在 NAPI
+        regex: '\[window\]\[moveWindowTo(?:Async)?\]msg: (?:Invalid param|Failed to convert parameter|The number of parameters is invalid)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnMoveTo
+      - id: FAIL-MOVE-PIP
+        title: 画中画不支持移动
+        kind: 应用误用
+        when: 对 PIP 窗调用 move
+        meaning: 断在 WM
+        regex: 'Unsupported operation for pip window'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.MoveTo
+
+  - id: resize_window
+    title: 改变窗口大小
+    api: Window.resize
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 resize, symbols: [Window.resize, Window.resizeAsync] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM Resize（协议终点）, symbols: [WindowSceneSessionImpl.Resize] }
+    enter:
+      - id: IN-RESIZE
+        meaning: NAPI 进入 resize
+        regex: '\[window\]\[resize'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    success:
+      - id: OK-RESIZE
+        meaning: WM 已下发 Resize
+        regex: '\[WindowRectUpdate:ClientReq\] Resize id:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.Resize
+    failures:
+      - id: FAIL-RESIZE-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: 宽高非法
+        meaning: 断在 NAPI
+        regex: '\[window\]\[resize(?:WindowAsync)?\]msg: (?:Invalid param|Failed)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+      - id: FAIL-RESIZE-FULLSCREEN
+        title: 全屏窗不可 resize
+        kind: 应用误用
+        when: 全屏模式
+        meaning: 断在 WM
+        regex: 'Fullscreen window could not resize'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+      - id: FAIL-RESIZE-MODE
+        title: 当前模式不可 resize
+        kind: 应用误用
+        when: 窗口模式不允许
+        meaning: 断在 WM
+        regex: 'window should not resize'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl
+
+  - id: set_window_limits
+    title: 设置尺寸限制
+    api: Window.setWindowLimits
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 setWindowLimits, symbols: [Window.setWindowLimits] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow.OnSetWindowLimits] }
+      - { layer_id: L-WM-CLIENT, name: WM 写 limits（协议终点）, symbols: [WindowSceneSessionImpl.SetWindowLimits] }
+    enter:
+      - id: IN-LIMITS
+        meaning: NAPI 进入 setWindowLimits
+        regex: '\[window\]\[setWindowLimits\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowLimits
+    success:
+      - id: OK-LIMITS
+        meaning: WM 已处理 SetWindowLimits 请求
+        regex: '\[WindowLimitsUpdate:ClientReq\] SetWindowLimits id:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetWindowLimits
+    failures:
+      - id: FAIL-LIMITS-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: limits 解析失败或宽高非法
+        meaning: 断在 NAPI
+        regex: '\[window\]\[setWindowLimits\]msg: (?:The number of parameters is invalid|Failed to convert parameter to windowLimits|Width or height should be greater than or equal to 0)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow.OnSetWindowLimits
+      - id: FAIL-LIMITS-TYPE
+        title: 窗类型不支持
+        kind: 应用误用
+        when: 非主/子/对话框等
+        meaning: 断在 WM
+        regex: 'type not support'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.SetWindowLimits
+
+  - id: enable_drag
+    title: 使能拖拽缩放
+    api: Window.enableDrag
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 enableDrag, symbols: [Window.enableDrag] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindow] }
+      - { layer_id: L-WM-CLIENT, name: WM EnableDrag（协议终点）, symbols: [WindowSessionImpl.EnableDrag] }
+    enter:
+      - id: IN-DRAG
+        meaning: NAPI 进入 enableDrag
+        regex: '\[window\]\[enableDrag\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+    success:
+      - id: OK-DRAG
+        meaning: 拖拽使能已下发
+        regex: 'enableDrag:\d+, errcode:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.EnableDrag
+    failures:
+      - id: FAIL-DRAG-PARAM
+        title: 参数非法
+        kind: 应用误用
+        when: argc 或 enableDrag 类型不对
+        meaning: 断在 NAPI
+        regex: '\[window\]\[enableDrag\]msg: (?:The number of parameters is invalid|Failed to convert parameter to enableDrag)'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindow
+      - id: FAIL-DRAG-DEVICE
+        title: 设备不支持
+        kind: 依赖失败
+        when: 设备不支持拖拽
+        meaning: 断在 WM
+        regex: 'The device is not supported'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.EnableDrag
+      - id: FAIL-DRAG-TYPE
+        title: 窗类型不可拖拽
+        kind: 应用误用
+        when: 类型不允许
+        meaning: 断在 WM
+        regex: 'invalid window type'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSessionImpl.EnableDrag

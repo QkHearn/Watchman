@@ -1,0 +1,167 @@
+# Watchman 应用启动页 YAML 2.3
+# 指南模块名：应用启动页
+# 对外接口分册：apis/应用启动页.md
+# 四仓：
+#   配置 → module.json5 abilities（startWindow*）
+#   运行时 → WindowStage.removeStartingWindow（WMSStartupPage）
+#   资源解析 → SceneSessionManager.GetStartupPage（WMSPattern / WMSStartupPage）
+# DTS：@ohos.window.d.ts（WindowStage.removeStartingWindow）
+# NAPI：window_runtime（application.WindowStage）
+# 主诉是启动页显示/移除协议；success 默认 L-WM-CLIENT。
+schema_version: "2.3.0"
+module_id: launch_page
+enabled: true
+meta:
+  name: 应用启动页
+  name_en: LaunchPage
+  subsystem: Window
+  field_id: RF-WMS-START
+  field_name: WMS-StartupPage
+  description: |
+    【做什么】冷启动 Starting Window：简易/增强启动页由 module.json5 配置；
+    运行时可 removeStartingWindow（需 enable.remove.starting.window）。
+    主责在 window_manager（WMSStartupPage）；资源解析亦见 WMSPattern。
+    【典型现象】启动页不消失、未配置 remove 开关、主窗未就绪、资源缺失。
+    【不要分流】窗口元数据尺寸/模式 → 窗口元数据配置；窗口生命周期 loadContent → 窗口生命周期；
+    转场动画 → 设置窗口动效。
+    【怎么定位】success 卡在 L-WM-CLIENT（NotifyRemoveStartingWindow success id）。
+  owners: []
+  kb:
+    path: ""
+    feature_dir: localize-kb/features/launch_page
+log_blacklist:
+  - id: BL-META
+    regex: '(?:ohos\.ability\.window\.(?:width|height|left|top|isMaximize)|setSupportedWindowModes|setWindowRectAutoSave)'
+    flags: i
+    to_module: window_metadata
+    to_module_name: 窗口元数据配置
+    reason: 主窗尺寸/模式元数据，不是启动页
+  - id: BL-LIFE
+    regex: '(?:loadContent|setUIContent|WMSLife\b)'
+    flags: i
+    to_module: window_lifecycle
+    to_module_name: 窗口生命周期
+    reason: 内容加载生命周期
+  - id: BL-ANIM
+    regex: '(?:WMSAnimation|setWindowTransitionAnimation)'
+    flags: i
+    to_module: window_animation
+    to_module_name: 设置窗口动效
+    reason: 转场动效另册
+  - id: BL-MAIN
+    regex: '(?:getMainWindow|WMSMain\b)'
+    flags: i
+    to_module: main_window
+    to_module_name: 主窗口
+    reason: 主窗获取，不是启动页
+apis:
+  external:
+    - { id: abilities.startWindowIcon, role: 简易启动页图标资源索引 }
+    - { id: abilities.startWindowBackground, role: 简易启动页背景色资源索引 }
+    - { id: abilities.startWindow, role: 增强启动页配置 json 索引 }
+    - { id: WindowStage.removeStartingWindow, role: 运行时移除启动页 }
+    - { id: metadata.enable.remove.starting.window, role: 是否允许 removeStartingWindow }
+    - { id: metadata.enable.optional.starting.window, role: 性能自适应简易启动页开关 }
+  internal:
+    - { id: JsWindowStage.RemoveStartingWindow, role: NAPI 移除启动页 }
+    - { id: WindowSceneSessionImpl.NotifyRemoveStartingWindow, role: WM 通知移除 }
+    - { id: SceneSessionManager.GetStartupPage, role: 解析启动页资源 }
+    - { id: SceneSessionManager.GetEnableRemoveStartingWindowFromBMS, role: 读 remove 开关 }
+  dependencies:
+    - { id: BundleMgr.AbilityInfo, module: "", role: BMS 提供 abilities/metadata }
+collect:
+  title: 请复制下面这一条正则到 BetaClub 搜集日志，把命中行完整粘贴到阶段二
+  where: BetaClub
+  hint: 只需这一条正则。搜集后把结果原样贴到下方。
+  regex: >-
+    (?:WMSStartupPage|removeStartingWindow|enable\.remove\.starting\.window|success id:\d+|GetStartupPage|get icon from desk success|session is invalid|The window stage is not created or destroyed|The main window is not created or destroyed|Get ability info from BMS failed)
+atoms:
+  - id: remove_starting_window
+    title: 移除启动页
+    api: WindowStage.removeStartingWindow
+    callchain:
+      - { layer_id: L-JS, name: 应用调用 removeStartingWindow, symbols: [WindowStage.removeStartingWindow] }
+      - { layer_id: L-NAPI, name: NAPI 校验, symbols: [JsWindowStage.RemoveStartingWindow] }
+      - { layer_id: L-WM-CLIENT, name: 通知移除（协议终点）, symbols: [WindowSceneSessionImpl.NotifyRemoveStartingWindow] }
+    enter:
+      - id: IN-REMOVE
+        meaning: NAPI 已进入（错误时可见）
+        regex: '\[window\]\[removeStartingWindow\]'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.RemoveStartingWindow
+    success:
+      - id: OK-REMOVE
+        meaning: 启动页移除成功
+        regex: 'success id:\d+'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.NotifyRemoveStartingWindow
+    failures:
+      - id: FAIL-REMOVE-STAGE
+        title: WindowStage 无效
+        kind: 应用误用
+        when: stage 未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[removeStartingWindow\]msg: The window stage is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.RemoveStartingWindow
+      - id: FAIL-REMOVE-MAIN
+        title: 主窗口无效
+        kind: 应用误用
+        when: 主窗未创建或已销毁
+        meaning: 断在 NAPI
+        regex: '\[window\]\[removeStartingWindow\]msg: The main window is not created or destroyed'
+        flags: i
+        layer_id: L-NAPI
+        function: JsWindowStage.RemoveStartingWindow
+      - id: FAIL-REMOVE-SESSION
+        title: 会话无效
+        kind: 应用误用
+        when: session is invalid
+        meaning: 断在 WM
+        regex: 'session is invalid, id:'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: WindowSceneSessionImpl.NotifyRemoveStartingWindow
+
+  - id: resolve_startup_page
+    title: 解析启动页资源
+    api: abilities.startWindow
+    callchain:
+      - { layer_id: L-JS, name: 配置 startWindow* / metadata, symbols: [abilities.startWindowIcon, abilities.startWindowBackground, abilities.startWindow] }
+      - { layer_id: L-WM-CLIENT, name: GetStartupPage 解析资源, symbols: [SceneSessionManager.GetStartupPage] }
+    enter:
+      - id: IN-RESOLVE
+        meaning: 开始解析启动页
+        regex: 'enable\.remove\.starting\.window='
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: SceneSessionManager.GetEnableRemoveStartingWindowFromBMS
+    success:
+      - id: OK-RESOLVE
+        meaning: 从桌面图标或资源解析成功
+        regex: 'get icon from desk success'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: SceneSessionManager.GetStartupPage
+    failures:
+      - id: FAIL-RESOLVE-BMS
+        title: BMS 取 AbilityInfo 失败
+        kind: 依赖失败
+        when: QueryAbilityInfo 失败
+        meaning: 断在 WM/依赖
+        regex: 'Get ability info from BMS failed'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: SceneSessionManager.GetStartupPage
+      - id: FAIL-RESOLVE-DEFAULT
+        title: remove 开关默认 false
+        kind: 应用误用
+        when: 未配置 enable.remove.starting.window
+        meaning: 未开 remove 能力
+        regex: 'enable\.remove\.starting\.window default false'
+        flags: i
+        layer_id: L-WM-CLIENT
+        function: SceneSessionManager.GetEnableRemoveStartingWindowFromBMS
